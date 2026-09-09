@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 700" width="980" height="700" font-family="Georgia, 'Times New Roman', serif">
+  <defs>
+    <style>
+      .lbl   { font-family: system-ui, -apple-system, sans-serif; }
+      .pin   { font-family: ui-monospace, 'DejaVu Sans Mono', monospace; font-size: 12px; fill: #f2e8d9; }
+      .pinsm { font-family: ui-monospace, 'DejaVu Sans Mono', monospace; font-size: 10.5px; fill: #b9a691; }
+      .cap   { font-family: system-ui, sans-serif; font-size: 12px; fill: #b9a691; }
+      .hdr   { font-size: 17px; fill: #c9a227; letter-spacing: .06em; }
+      .wire  { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <rect width="980" height="700" fill="#191310"/>
+  <rect x="0" y="0" width="980" height="4" fill="#c9a227"/>
+
+  <text x="40" y="52" class="hdr" font-size="25">Grandfather Clock Tool — Wiring</text>
+  <text x="40" y="76" class="cap">FORIOT ESP8266 NodeMCU (built-in SSD1306 OLED) · v2.9.0</text>
+
+  <!-- ============ ESP8266 BOARD ============ -->
+  <rect x="380" y="170" width="200" height="320" rx="8" fill="#2d231a" stroke="#c9a227" stroke-width="2"/>
+  <text x="480" y="196" text-anchor="middle" class="lbl" font-size="13" fill="#f2e8d9" font-weight="600">ESP8266 NodeMCU</text>
+
+  <!-- OLED on board -->
+  <rect x="405" y="212" width="150" height="58" rx="4" fill="#120c08" stroke="#3f3125"/>
+  <text x="480" y="238" text-anchor="middle" class="pinsm" fill="#c9a227">SSD1306 OLED</text>
+  <text x="480" y="255" text-anchor="middle" class="pinsm">built in · addr 0x3C</text>
+
+  <text x="480" y="470" text-anchor="middle" class="pinsm">USB power / flashing</text>
+  <rect x="447" y="478" width="66" height="12" rx="2" fill="#3f3125"/>
+
+  <!-- Board pin stubs: LEFT (mic side) -->
+  <g>
+    <rect x="365" y="303" width="15" height="9" fill="#c9a227"/>
+    <text x="392" y="311" class="pin">A0</text>
+    <rect x="365" y="343" width="15" height="9" fill="#c9a227"/>
+    <text x="392" y="351" class="pin">3V3</text>
+    <rect x="365" y="383" width="15" height="9" fill="#c9a227"/>
+    <text x="392" y="391" class="pin">GND</text>
+  </g>
+
+  <!-- Board pin stubs: RIGHT (I2C / BME side) -->
+  <g>
+    <rect x="580" y="303" width="15" height="9" fill="#c9a227"/>
+    <text x="568" y="311" text-anchor="end" class="pin">D5</text>
+    <text x="568" y="324" text-anchor="end" class="pinsm">GPIO14 · SDA</text>
+    <rect x="580" y="343" width="15" height="9" fill="#c9a227"/>
+    <text x="568" y="351" text-anchor="end" class="pin">D6</text>
+    <text x="568" y="364" text-anchor="end" class="pinsm">GPIO12 · SCL</text>
+    <rect x="580" y="383" width="15" height="9" fill="#c9a227"/>
+    <text x="568" y="391" text-anchor="end" class="pin">3V3</text>
+    <rect x="580" y="418" width="15" height="9" fill="#c9a227"/>
+    <text x="568" y="426" text-anchor="end" class="pin">GND</text>
+  </g>
+
+  <!-- internal OLED bus (dashed = already wired on the board) -->
+  <path d="M 555 241 L 610 241 L 610 307 L 595 307" class="wire" stroke="#6f5f45" stroke-dasharray="5 5" stroke-width="2"/>
+  <path d="M 555 252 L 622 252 L 622 347 L 595 347" class="wire" stroke="#6f5f45" stroke-dasharray="5 5" stroke-width="2"/>
+  <text x="636" y="243" class="pinsm" fill="#8b7860">internal — do not rewire</text>
+
+  <!-- ============ LM393 MIC ============ -->
+  <rect x="60" y="270" width="175" height="135" rx="8" fill="#231b15" stroke="#3f3125" stroke-width="2"/>
+  <text x="147" y="296" text-anchor="middle" class="lbl" font-size="13" fill="#f2e8d9" font-weight="600">LM393 mic</text>
+  <circle cx="105" cy="330" r="14" fill="#120c08" stroke="#3f3125"/>
+  <rect x="130" y="352" width="26" height="16" rx="3" fill="#120c08" stroke="#3f3125"/>
+  <text x="143" y="382" text-anchor="middle" class="pinsm">gain pot</text>
+
+  <g>
+    <rect x="235" y="311" width="15" height="9" fill="#8b7860"/>
+    <text x="228" y="319" text-anchor="end" class="pin">GND</text>
+    <rect x="235" y="341" width="15" height="9" fill="#8b7860"/>
+    <text x="228" y="349" text-anchor="end" class="pin">OUT</text>
+    <rect x="235" y="371" width="15" height="9" fill="#8b7860"/>
+    <text x="228" y="379" text-anchor="end" class="pin">VCC</text>
+  </g>
+
+  <!-- mic wires -->
+  <!-- GND: mic(250,315) -> board GND(365,387) -->
+  <path d="M 250 315 L 276 315 L 276 387 L 365 387" class="wire" stroke="#9aa0a6"/>
+  <!-- OUT -> A0 -->
+  <path d="M 250 345 L 306 345 L 306 307 L 365 307" class="wire" stroke="#e0c158"/>
+  <!-- VCC -> 3V3 -->
+  <path d="M 250 375 L 336 375 L 336 347 L 365 347" class="wire" stroke="#d9534f"/>
+
+  <text x="60" y="256" class="pinsm" fill="#e0c158">OUT → A0</text>
+  <text x="128" y="256" class="pinsm" fill="#d9534f">VCC → 3V3 (never 5V)</text>
+  <text x="60" y="426" class="pinsm">3 wires total</text>
+
+  <!-- ============ BME280 ============ -->
+  <rect x="745" y="270" width="175" height="160" rx="8" fill="#231b15" stroke="#3f3125" stroke-width="2"/>
+  <text x="832" y="296" text-anchor="middle" class="lbl" font-size="13" fill="#f2e8d9" font-weight="600">BME280</text>
+  <text x="832" y="313" text-anchor="middle" class="pinsm">optional · 0x76 or 0x77</text>
+
+  <g>
+    <rect x="730" y="336" width="15" height="9" fill="#8b7860"/>
+    <text x="752" y="344" class="pin">VCC</text>
+    <rect x="730" y="366" width="15" height="9" fill="#8b7860"/>
+    <text x="752" y="374" class="pin">GND</text>
+    <rect x="730" y="396" width="15" height="9" fill="#8b7860"/>
+    <text x="752" y="404" class="pin">SCL</text>
+    <rect x="730" y="416" width="15" height="9" fill="#8b7860"/>
+    <text x="752" y="424" class="pin">SDA</text>
+  </g>
+
+  <!-- BME wires: share the SAME I2C bus as the OLED -->
+  <!-- SDA: board D5(595,307) -> BME SDA(730,420) -->
+  <path d="M 595 307 L 648 307 L 648 420 L 730 420" class="wire" stroke="#6fb0d9"/>
+  <!-- SCL: board D6(595,347) -> BME SCL(730,400) -->
+  <path d="M 595 347 L 668 347 L 668 400 L 730 400" class="wire" stroke="#8ba645"/>
+  <!-- 3V3: board(595,387) -> BME VCC(730,340) -->
+  <path d="M 595 387 L 692 387 L 692 340 L 730 340" class="wire" stroke="#d9534f"/>
+  <!-- GND: board(595,422) -> BME GND(730,370) -->
+  <path d="M 595 422 L 712 422 L 712 370 L 730 370" class="wire" stroke="#9aa0a6"/>
+
+  <!-- ============ WARNING CALLOUT ============ -->
+  <rect x="40" y="530" width="900" height="66" rx="8" fill="#2a1a12" stroke="#c1543c" stroke-width="1.5"/>
+  <text x="60" y="554" class="lbl" font-size="13" fill="#e08a7a" font-weight="700">⚠  OLED pins are REVERSED from the vendor listing</text>
+  <text x="60" y="575" class="cap" font-size="12.5">Verified by I²C scan: <tspan fill="#f2e8d9" font-weight="600">SDA = GPIO14 (D5)</tspan>, <tspan fill="#f2e8d9" font-weight="600">SCL = GPIO12 (D6)</tspan>. The Amazon listing states the opposite.</text>
+  <text x="60" y="590" class="cap" font-size="12.5">The BME280 shares this same bus. If the screen is blank, flash OLED_Finder.ino — it reports the true pins in ~2 seconds.</text>
+
+  <!-- ============ LEGEND ============ -->
+  <g transform="translate(40, 618)">
+    <text x="0" y="12" class="cap" font-size="12" fill="#8b7860">WIRES</text>
+    <line x1="58" y1="8" x2="88" y2="8" class="wire" stroke="#d9534f"/>
+    <text x="95" y="12" class="cap">3V3 power</text>
+    <line x1="175" y1="8" x2="205" y2="8" class="wire" stroke="#9aa0a6"/>
+    <text x="212" y="12" class="cap">Ground</text>
+    <line x1="275" y1="8" x2="305" y2="8" class="wire" stroke="#e0c158"/>
+    <text x="312" y="12" class="cap">Analog signal</text>
+    <line x1="410" y1="8" x2="440" y2="8" class="wire" stroke="#6fb0d9"/>
+    <text x="447" y="12" class="cap">I²C SDA</text>
+    <line x1="512" y1="8" x2="542" y2="8" class="wire" stroke="#8ba645"/>
+    <text x="549" y="12" class="cap">I²C SCL</text>
+    <line x1="610" y1="8" x2="640" y2="8" class="wire" stroke="#6f5f45" stroke-dasharray="5 5" stroke-width="2"/>
+    <text x="647" y="12" class="cap">Already wired on board</text>
+  </g>
+
+  <text x="40" y="668" class="cap" font-size="12">
+    <tspan fill="#c9a227" font-weight="600">3 wires</tspan> for the microphone · <tspan fill="#c9a227" font-weight="600">+4 wires</tspan> for the optional BME280 · no SD card, no SPI — D0–D4, D7, D8 remain free
+  </text>
+  <text x="40" y="686" class="cap" font-size="11.5">
+    A0 tolerates 0–1.0 V at the chip — powering the mic from 3V3 keeps it in range. No onboard divider? Add AO —[10k]—•—[22k]— GND, tap the junction.
+  </text>
+</svg>
