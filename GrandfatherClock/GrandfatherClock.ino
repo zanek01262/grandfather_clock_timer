@@ -24,8 +24,10 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
+#include <ESP8266HTTPUpdateServer.h>   // browser-based OTA (core library)
 #include <DNSServer.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include "config.h"
 #include "settings.h"
@@ -39,6 +41,12 @@
 #include "ticks.h"
 
 ESP8266WebServer server(80);
+// Browser OTA. ArduinoOTA (IDE network port) is kept, but the IDE 2.x has a
+// long-standing bug where a network port's properties fail to resolve
+// ("invalid integer value: '{upload.port.properties.port}'") whenever mDNS
+// discovery drops the device. This path does not involve the IDE, espota or
+// mDNS at all: browse to /update and upload the .bin.
+ESP8266HTTPUpdateServer httpUpdater;
 DNSServer        dnsServer;
 
 // Runtime mode: are we provisioning (AP) or running (STA)?
@@ -61,10 +69,17 @@ static void startNTP() {
 
 // 64-bit epoch milliseconds, guarded against 32-bit overflow + garbage NTP.
 unsigned long long epochMillis() {
-  time_t now = time(nullptr);
-  if ((unsigned long)now < NTP_MIN_EPOCH) return 0ULL;  // not yet valid
-  return (unsigned long long)now * 1000ULL +
-         (unsigned long long)(millis() % 1000UL);
+  // Sub-second time MUST come from gettimeofday(), which SNTP disciplines.
+  // The earlier version used `millis() % 1000`, but that is the millisecond
+  // fraction of UPTIME and has no phase relationship to the NTP second
+  // boundary — it was an arbitrary offset that drifted with the crystal
+  // (~20-40 ppm, i.e. 70-150 ms of wander per hour), adding real noise to
+  // every strike-offset measurement. Precise-looking digits, no accuracy.
+  struct timeval tv;
+  if (gettimeofday(&tv, nullptr) != 0) return 0ULL;
+  if ((unsigned long)tv.tv_sec < NTP_MIN_EPOCH) return 0ULL;   // not synced
+  return (unsigned long long)tv.tv_sec * 1000ULL +
+         (unsigned long long)(tv.tv_usec / 1000);
 }
 
 bool timeIsValid() {
@@ -140,11 +155,12 @@ static void handleState() {
   char buf[640];
   int off = snprintf(buf, sizeof(buf),
     "{\"level\":%.4f,\"ambient\":%.4f,\"peak\":%.4f,\"threshold\":%.4f,"
-    "\"chimes\":%lu,\"lastChime\":%lu,\"timeValid\":%d,\"epoch\":%lu,"
+    "\"chimes\":%lu,\"lastChime\":%lu,\"lastPeak\":%.4f,\"timeValid\":%d,\"epoch\":%lu,"
     "\"fw\":\"" FW_VERSION "\",\"scopeSeq\":%lu,\"scope\":[",
     (double)s.level, (double)s.ambient, (double)s.peak,
     (double)settings.threshold,
     (unsigned long)s.chimeCount, (unsigned long)s.lastChimeEpoch,
+    (double)s.lastChimePeak,
     timeIsValid() ? 1 : 0, (unsigned long)time(nullptr),
     (unsigned long)scopeSeq);
   for (int i = 0; i < SCOPE_SEND_BINS && off < (int)sizeof(buf) - 12; i++)
@@ -194,7 +210,7 @@ static void handleLog() {
   // Rows written before v2.10.0 stored SECONDS; detect by magnitude.
   if (!storageReady()) { server.send(503, "text/plain", "no fs"); return; }
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "text/csv", "datetime_local,epoch_ms,peak\n");
+  server.send(200, "text/csv", "date,time,epoch_ms,sec_from_hour,peak\n");
   const char* parts[2] = { CHIME_LOG_OLD_PATH, CHIME_LOG_PATH };
   for (int p = 0; p < 2; p++) {
     File f = LittleFS.open(parts[p], "r");
@@ -202,13 +218,32 @@ static void handleLog() {
     while (f.available()) {
       String ln = f.readStringUntil('\n');
       if (ln.length() < 3) continue;
-      unsigned long long v = 0; float pk = 0;
-      if (sscanf(ln.c_str(), "%llu,%f", &v, &pk) != 2) continue;
-      if (v < 1000000000000ULL) v *= 1000ULL;      // legacy seconds row
-      char when[32];
-      formatLocalMs(v, when, sizeof(when));
-      char row[80];
-      int n = snprintf(row, sizeof(row), "%s,%llu,%.4f\n", when, v, (double)pk);
+      int comma = ln.indexOf(',');
+      if (comma < 1) continue;
+      // Parse WITHOUT %llu — the ESP8266's reduced newlib does not support
+      // 64-bit conversions in printf/scanf, so the timestamp is split as a
+      // decimal string: all but the last 3 digits are seconds, last 3 are ms.
+      // Legacy rows (<= 10 digits) hold plain seconds and get ms = 0.
+      String tok = ln.substring(0, comma);
+      float pk = ln.substring(comma + 1).toFloat();
+      unsigned long secs = 0; unsigned msPart = 0;
+      if (tok.length() > 10) {
+        secs   = strtoul(tok.substring(0, tok.length() - 3).c_str(), nullptr, 10);
+        msPart = (unsigned)strtoul(tok.substring(tok.length() - 3).c_str(), nullptr, 10);
+      } else {
+        secs = strtoul(tok.c_str(), nullptr, 10);
+      }
+      if (secs < NTP_MIN_EPOCH) continue;          // unusable timestamp
+      char d[12], t[14];
+      formatLocalParts((uint64_t)secs * 1000ULL + msPart, d, sizeof(d), t, sizeof(t));
+      // Signed seconds from the NEAREST top of the hour (+ = after the hour,
+      // - = before). This is the number that matters for a striking clock:
+      // it is how early or late the strike landed.
+      long nearestHour = (long)(((secs + 1800UL) / 3600UL) * 3600UL);
+      double fromHour = (double)((long)secs - nearestHour) + (double)msPart / 1000.0;
+      char row[120];
+      int n = snprintf(row, sizeof(row), "%s,%s,%lu%03u,%+.3f,%.4f\n",
+                       d, t, secs, msPart, fromHour, (double)pk);
       server.sendContent(row, n);
       yield();
     }
@@ -354,6 +389,66 @@ static void handleDriftDelete() {
               ok ? "{\"ok\":true}" : "{\"ok\":false,\"err\":\"not found\"}");
 }
 
+static void handleHistory() {
+  // Streams the coarse 1-second history so long plot windows are populated
+  // immediately, even right after a browser refresh. Values are integers
+  // (excess * HIST_SCALE); the client divides.
+  // Streamed straight out of the ring — copying it into a second
+  // HIST_SECONDS buffer here cost 7.2 KB of DRAM for no benefit and risked
+  // overflowing dram0_0_seg at link time.
+  uint16_t n   = soundHistoryCount();
+  uint32_t seq = soundHistorySeq();
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/plain", "");
+  char head[64];
+  int hn = snprintf(head, sizeof(head), "%u,%lu,%u\n",
+                    (unsigned)HIST_SCALE, (unsigned long)seq, n);
+  server.sendContent(head, hn);          // scale, total seconds, count
+
+  char chunk[256]; int used = 0;
+  for (uint16_t i = 0; i < n; i++) {
+    int w = snprintf(chunk + used, sizeof(chunk) - used,
+                     "%u%s", soundHistoryAt(i), (i + 1 < n) ? "," : "");
+    if (w < 0) break;
+    used += w;
+    if (used > (int)sizeof(chunk) - 12) {          // flush before overflow
+      server.sendContent(chunk, used); used = 0; yield();
+    }
+  }
+  if (used > 0) server.sendContent(chunk, used);
+  server.sendContent("");
+}
+
+static void handleLogStat() {
+  // Answers "why is my chime log empty?" without a serial cable. The three
+  // real causes are: filesystem not mounted (Flash Size set to FS:none),
+  // NTP not yet synced (strikes can't be timestamped so they aren't logged),
+  // or simply nothing detected yet.
+  size_t chimeBytes = 0, driftBytes = 0;
+  if (storageReady()) {
+    File f = LittleFS.open(CHIME_LOG_PATH, "r");
+    if (f) { chimeBytes = f.size(); f.close(); }
+    f = LittleFS.open(DRIFT_LOG_PATH, "r");
+    if (f) { driftBytes = f.size(); f.close(); }
+  }
+  SoundState s = soundGetState();
+  const char* why = "ok";
+  if (!storageReady())            why = "filesystem not mounted (check Flash Size = 4MB FS:2MB)";
+  else if (!timeIsValid())        why = "waiting for NTP - strikes are not logged until the clock has real time";
+  else if (chimeBytes == 0 && s.chimeCount == 0)
+                                  why = "no chimes detected yet - check threshold and mic gain";
+  else if (chimeBytes == 0)       why = "chimes detected since boot but none written - they occurred before NTP synced";
+  char buf[300];
+  snprintf(buf, sizeof(buf),
+    "{\"fs\":%d,\"timeValid\":%d,\"chimeBytes\":%u,\"driftBytes\":%u,"
+    "\"chimesSinceBoot\":%lu,\"why\":\"%s\"}",
+    storageReady() ? 1 : 0, timeIsValid() ? 1 : 0,
+    (unsigned)chimeBytes, (unsigned)driftBytes,
+    (unsigned long)s.chimeCount, why);
+  server.send(200, "application/json", buf);
+}
+
 static void handleWind() {
   horoLogWind();
   server.send(200, "application/json", "{\"ok\":true}");
@@ -372,7 +467,7 @@ static void handleDrift() {
   if (!storageReady()) { server.send(503, "text/plain", "no fs"); return; }
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/csv",
-    "datetime_local,epoch,strikes,expected,offset_s,valid,tempC,half_hour\n");
+    "date,time,epoch,strikes,expected,sec_from_hour,offset_mmss,valid,tempC,half_hour\n");
   File f = LittleFS.open(DRIFT_LOG_PATH, "r");
   if (f) {
     while (f.available()) {
@@ -382,11 +477,17 @@ static void handleDrift() {
       int got = sscanf(ln.c_str(), "%lu,%u,%u,%f,%u,%f,%u,%u",
                        &e,&c,&x,&o,&v,&tc,&hh,&msv);
       if (got < 5) continue;
-      char when[32];
-      formatLocalMs((uint64_t)e * 1000ULL + (uint64_t)msv, when, sizeof(when));
-      char row[140];
-      int n = snprintf(row, sizeof(row), "%s,%lu,%u,%u,%.3f,%u,%.2f,%u\n",
-                       when, e, c, x, (double)o, v,
+      char d[12], t[14];
+      formatLocalParts((uint64_t)e * 1000ULL + (uint64_t)msv, d, sizeof(d), t, sizeof(t));
+      // offset o is already the signed seconds from the top of the hour;
+      // also render it as +/-mm:ss so it is readable at a glance.
+      long ao = (long)(o < 0 ? -o : o);
+      char mmss[16];
+      snprintf(mmss, sizeof(mmss), "%c%ld:%02ld",
+               (o < 0 ? '-' : '+'), ao / 60, ao % 60);
+      char row[190];
+      int n = snprintf(row, sizeof(row), "%s,%s,%lu,%u,%u,%+.3f,%s,%u,%.2f,%u\n",
+                       d, t, e, c, x, (double)o, mmss, v,
                        (double)((got>=6)?tc:-100.0f), (got>=7)?hh:0);
       server.sendContent(row, n);
       yield();
@@ -483,10 +584,19 @@ static bool startSTAMode() {
   server.on("/api/tick/log",     handleTickLog);
   server.on("/api/tick/listen",  HTTP_POST, handleTickListen);
   server.on("/api/drift/delete", HTTP_POST, handleDriftDelete);
+  server.on("/api/logstat",      handleLogStat);
+  server.on("/api/history",      handleHistory);
   server.on("/api/drift",        handleDrift);
   server.on("/api/reset",  handleReset);
   server.onNotFound(handleNotFound);
   server.begin();
+
+  // Browser OTA at /update — register before begin() so the routes exist.
+#ifdef OTA_PASSWORD
+  httpUpdater.setup(&server, "/update", "admin", OTA_PASSWORD);
+#else
+  httpUpdater.setup(&server, "/update");
+#endif
 
   // mDNS: dashboard reachable at http://MDNS_HOSTNAME.local
   if (MDNS.begin(MDNS_HOSTNAME)) MDNS.addService("http", "tcp", 80);
@@ -498,6 +608,10 @@ static bool startSTAMode() {
 #endif
   ArduinoOTA.begin();
 
+  Serial.print(F("[OTA] browser update page: http://"));
+  Serial.print(WiFi.localIP());
+  Serial.println(F("/update"));
+
   displayConnected(WiFi.localIP().toString());
   return true;
 }
@@ -505,8 +619,11 @@ static bool startSTAMode() {
 // =====================================================================
 //  CHIME CALLBACK  — fired by sound module on a confirmed chime
 // =====================================================================
-static void onChime(float peak) {
-  unsigned long long ms = epochMillis();
+static void onChime(float peak, uint32_t onsetAgeMs) {
+  // The callback arrives CHIME_PEAK_WINDOW_MS after the strike began; wind
+  // the timestamp back so horology still sees the true onset instant.
+  unsigned long long now = epochMillis();
+  unsigned long long ms  = (now > onsetAgeMs) ? (now - onsetAgeMs) : now;
   unsigned long epoch   = (unsigned long)(ms / 1000ULL);
   soundNoteChimeEpoch(epoch);
   if (epoch >= NTP_MIN_EPOCH) logChime(ms, peak);   // full ms precision

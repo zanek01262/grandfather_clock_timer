@@ -389,8 +389,8 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
         <div class="scopectl">
           <label>Scale</label>
           <select id="ymode">
-            <option value="lin" selected>Linear</option>
-            <option value="log">Log (60 dB)</option>
+            <option value="lin">Linear</option>
+            <option value="log" selected>Log (60 dB)</option>
           </select>
           <label>Y max</label>
           <select id="yscale">
@@ -407,6 +407,9 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
             <option value="2400">1 min</option>
             <option value="4800">2 min</option>
             <option value="12000">5 min</option>
+            <option value="-900">15 min</option>
+            <option value="-1800">30 min</option>
+            <option value="-3600">1 hour</option>
           </select>
           <span class="win" id="winNote">25ms bins</span>
         </div>
@@ -498,6 +501,10 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
             <span>swing <b id="gSwing">\u2014</b></span>
             <span>clip <b id="gClip">\u2014</b></span>
           </div>
+          <div class="gnums" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
+            <span>last chime peak <b id="gPeak">\u2014</b></span>
+            <span>recent <b id="gPeaks">\u2014</b></span>
+          </div>
         </div>
       </div>
 
@@ -537,8 +544,11 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
       <div class="panel">
         <h2>Logs &amp; device</h2>
         <div class="actions">
-          <a class="btn" href="/api/log" download="chimes.csv">Chime log</a>
-          <a class="btn" href="/api/drift" download="drift.csv">Drift log</a>
+          <button class="btn primary" onclick="dlXlsx('chimes')">Chime log (Excel)</button>
+          <button class="btn primary" onclick="dlXlsx('drift')">Drift log (Excel)</button>
+          <a class="btn" href="/api/log" download="chimes.csv">CSV</a>
+          <a class="btn" href="/api/drift" download="drift.csv">CSV</a>
+          <a class="btn" href="/update" target="_blank" data-help="tt:Firmware update|Upload a compiled .bin straight from the browser. This bypasses the Arduino IDE, espota and mDNS entirely \u2014 use Sketch > Export Compiled Binary, then drop the file here.">Update firmware</a>
           <button class="btn danger" id="reset">Reset WiFi</button>
         </div>
       </div>
@@ -555,10 +565,30 @@ const CV=(n)=>getComputedStyle(document.documentElement).getPropertyValue(n).tri
 const cv=document.getElementById('scope'), cx=cv.getContext('2d');
 const N=12000, BIN_MS=25, buf=new Float32Array(N);  // ring holds up to 5 min
 let winBins=1200;                                   // visible span (user set)
+// Windows longer than the 5-minute live ring switch to HISTORY MODE: the
+// device keeps one peak per second for an hour, so a long view is populated
+// immediately instead of waiting (and it survives a page refresh).
+let histMode=0;            // 0 = live 25ms stream, else window length in sec
+let histData=null;         // Float32Array of 1-second peaks (oldest first)
+function fetchHistory(){
+  if(!histMode) return;
+  fetch('/api/history').then(r=>r.text()).then(t=>{
+    const nl=t.indexOf('\n'); if(nl<0) return;
+    const hdr=t.slice(0,nl).split(','), scale=+hdr[0]||10000;
+    const body=t.slice(nl+1).trim();
+    if(!body){histData=new Float32Array(0);return;}
+    const parts=body.split(',');
+    const a=new Float32Array(parts.length);
+    for(let i=0;i<parts.length;i++)a[i]=(+parts[i])/scale;
+    histData=a;
+  }).catch(()=>{});
+}
+setInterval(()=>{if(histMode)fetchHistory();},10000);
 let newestSeq=-1, newestT=0;   // absolute index + arrival time of newest bin
 let threshold=0.18;
 let yMode='auto';              // 'auto' or fixed top-of-scale
-let scaleType='lin';           // 'lin' | 'log'
+let scaleType='log';           // 'lin' | 'log' — log by default: it
+                               // shows quiet ticks and loud chimes at once
 let yMax=0.2;
 const LOG_DECADES=3;           // log view spans yMax down to yMax/1000
 
@@ -586,8 +616,13 @@ function drawScope(){
   let target;
   if(yMode==='auto'){
     let m=0;
-    const lo=Math.max(0,newestSeq-winBins+1);
-    for(let b=lo;b<=newestSeq;b++){const v=buf[b%N]; if(v>m)m=v;}
+    if(histMode&&histData&&histData.length){
+      const span=Math.min(histMode,histData.length), st=histData.length-span;
+      for(let i=0;i<span;i++) if(histData[st+i]>m)m=histData[st+i];
+    }else{
+      const lo=Math.max(0,newestSeq-winBins+1);
+      for(let b=lo;b<=newestSeq;b++){const v=buf[b%N]; if(v>m)m=v;}
+    }
     target=Math.max(0.02,Math.min(0.6,m*1.25));
   }else target=+yMode;
   yMax+=(target-yMax)*0.08;
@@ -613,6 +648,30 @@ function drawScope(){
     cx.strokeStyle=CV('--thresh');cx.setLineDash([6,5]);
     cx.beginPath();cx.moveTo(0,ty);cx.lineTo(w,ty);cx.stroke();cx.setLineDash([]);
   }
+  // --- history mode: draw device-supplied 1-second peaks ---
+  if(histMode){
+    if(histData && histData.length){
+      const span=Math.min(histMode,histData.length);
+      const start=histData.length-span;
+      cx.strokeStyle=CV('--trace');cx.lineWidth=1.5;
+      cx.lineJoin='round';cx.lineCap='round';
+      cx.shadowColor=CV('--traceglow');cx.shadowBlur=8;
+      cx.beginPath();
+      for(let i=0;i<span;i++){
+        const x=(i/(span-1||1))*w, y=yOf(histData[start+i],h);
+        i?cx.lineTo(x,y):cx.moveTo(x,y);
+      }
+      cx.stroke();cx.shadowBlur=0;
+    }else{
+      cx.fillStyle=CV('--axis');cx.font='12px monospace';
+      cx.fillText('loading history\u2026',12,h/2);
+    }
+    cx.fillStyle=CV('--axis');cx.font='12px monospace';
+    cx.fillText(yMax.toFixed(3)+(scaleType==='log'?' log':'')+'  \u00B7  1s bins',8,14);
+    requestAnimationFrame(drawScope);
+    return;
+  }
+
   // --- trace: time-interpolated scroll ---
   // Bins arrive in bursts each poll; sliding by wall-clock time between
   // arrivals turns the burst-jumps into continuous 60fps motion.
@@ -640,10 +699,16 @@ function drawScope(){
 fitCanvas();
 document.getElementById('yscale').onchange=function(){yMode=this.value;};
 document.getElementById('xwin').onchange=function(){
-  winBins=+this.value;
-  const secs=winBins*BIN_MS/1000;
-  document.getElementById('winNote').textContent =
-    (secs>=60? (secs/60)+' min' : secs+' s')+' \u00B7 25ms bins';
+  const v=+this.value;
+  const note=document.getElementById('winNote');
+  if(v<0){                       // history mode: value is -seconds
+    histMode=-v; histData=null; fetchHistory();
+    note.textContent=(-v/60)+' min \u00B7 1s bins \u00B7 from device';
+  }else{
+    histMode=0; winBins=v;
+    const secs=winBins*BIN_MS/1000;
+    note.textContent=(secs>=60?(secs/60)+' min':secs+' s')+' \u00B7 25ms bins';
+  }
 };
 document.getElementById('ymode').onchange=function(){scaleType=this.value;};
 requestAnimationFrame(drawScope);
@@ -658,6 +723,7 @@ function fmtAge(epoch,nowEpoch,valid){
   if(a<129600) return Math.floor(a/3600)+'h';
   return Math.floor(a/86400)+'d';
 }
+let lastChimeCount=-1, recentPeaks=[];
 async function poll(){
   try{
     const s=await (await fetch('/api/state')).json();
@@ -668,6 +734,16 @@ async function poll(){
       buf[(seq-fresh+i)%N]=arr[arr.length-fresh+i];
     if(fresh>0){newestSeq=seq-1;newestT=performance.now();}
     document.getElementById('chimes').textContent=s.chimes;
+    // Track true chime peaks so gain can be judged on real loudness.
+    if(s.chimes!==lastChimeCount){
+      lastChimeCount=s.chimes;
+      if(s.lastPeak>0){
+        recentPeaks.push(s.lastPeak); if(recentPeaks.length>6)recentPeaks.shift();
+        const gp=document.getElementById('gPeak'), gl=document.getElementById('gPeaks');
+        if(gp) gp.textContent=s.lastPeak.toFixed(4);
+        if(gl) gl.textContent=recentPeaks.map(v=>v.toFixed(3)).join('  ');
+      }
+    }
     document.getElementById('lvl').textContent=(+s.peak).toFixed(3);
     document.getElementById('last').textContent=fmtAge(s.lastChime,s.epoch,!!s.timeValid);
     if(s.timeValid){
@@ -852,13 +928,117 @@ document.getElementById('tickListen').onclick=function(){
     .finally(()=>{document.getElementById('tickListen').disabled=false;});
 };
 
+
+// ===== XLSX export (no dependencies) =====
+// The device serves plain CSV; the browser turns it into a properly typed
+// workbook. Dates/times become real Excel date/time values (ms preserved),
+// numbers become numbers - so sorting, charting and formatting all work.
+const _CRCT=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;
+ for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function _crc32(u){let c=0xFFFFFFFF;for(let i=0;i<u.length;i++)c=_CRCT[(c^u[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+const _enc=s=>new TextEncoder().encode(s);
+const _xe=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function _dser(y,m,d){return Date.UTC(y,m-1,d)/86400000+25569;}
+function _zip(fs){const ch=[],cd=[];let off=0;
+ for(const f of fs){const nm=_enc(f.name),da=_enc(f.data),cr=_crc32(da);
+  const l=new DataView(new ArrayBuffer(30));l.setUint32(0,0x04034b50,true);l.setUint16(4,20,true);
+  l.setUint32(14,cr,true);l.setUint32(18,da.length,true);l.setUint32(22,da.length,true);
+  l.setUint16(26,nm.length,true);ch.push(new Uint8Array(l.buffer),nm,da);
+  const c=new DataView(new ArrayBuffer(46));c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);
+  c.setUint16(6,20,true);c.setUint32(16,cr,true);c.setUint32(20,da.length,true);
+  c.setUint32(24,da.length,true);c.setUint16(28,nm.length,true);c.setUint32(42,off,true);
+  cd.push(new Uint8Array(c.buffer),nm);off+=30+nm.length+da.length;}
+ let cl=0;for(const c of cd)cl+=c.length;
+ const e=new DataView(new ArrayBuffer(22));e.setUint32(0,0x06054b50,true);
+ e.setUint16(8,fs.length,true);e.setUint16(10,fs.length,true);e.setUint32(12,cl,true);e.setUint32(16,off,true);
+ const all=[...ch,...cd,new Uint8Array(e.buffer)];let tot=0;for(const a of all)tot+=a.length;
+ const o=new Uint8Array(tot);let p=0;for(const a of all){o.set(a,p);p+=a.length;}return o;}
+function _xlsx(cols,rows,name){
+ const CN=n=>{let s='';n++;while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=(n-m-1)/26;}return s;};
+ const SS={date:2,time:3,num:4,num4:5,int:6,num1:7,text:0};
+ let sd='<row r="1">';
+ cols.forEach((c,i)=>{sd+=`<c r="${CN(i)}1" s="1" t="inlineStr"><is><t>${_xe(c.h)}</t></is></c>`;});
+ sd+='</row>';
+ rows.forEach((r,ri)=>{sd+=`<row r="${ri+2}">`;
+  cols.forEach((c,i)=>{const v=r[i];if(v===null||v===undefined||v==='')return;
+   const rf=`${CN(i)}${ri+2}`,s=SS[c.t]!==undefined?SS[c.t]:0;
+   sd+= c.t==='text' ? `<c r="${rf}" s="${s}" t="inlineStr"><is><t>${_xe(v)}</t></is></c>`
+                     : `<c r="${rf}" s="${s}"><v>${v}</v></c>`;});
+  sd+='</row>';});
+ const cx=cols.map((c,i)=>`<col min="${i+1}" max="${i+1}" width="${c.w||14}" customWidth="1"/>`).join('');
+ const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1"/><sheetViews><sheetView workbookViewId="0" tabSelected="1"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${cx}</cols><sheetData>${sd}</sheetData><autoFilter ref="A1:${CN(cols.length-1)}${rows.length+1}"/></worksheet>`;
+ const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="5"><numFmt numFmtId="164" formatCode="yyyy\-mm\-dd"/><numFmt numFmtId="165" formatCode="hh:mm:ss.000"/><numFmt numFmtId="166" formatCode="0.000"/><numFmt numFmtId="167" formatCode="0.0000"/><numFmt numFmtId="168" formatCode="0.0"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF2E8D9"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="167" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="1" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="168" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+ return _zip([
+  {name:'[Content_Types].xml',data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'},
+  {name:'_rels/.rels',data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+  {name:'xl/workbook.xml',data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${_xe(name)}" sheetId="1" r:id="rId1"/></sheets></workbook>`},
+  {name:'xl/_rels/workbook.xml.rels',data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'},
+  {name:'xl/styles.xml',data:styles},
+  {name:'xl/worksheets/sheet1.xml',data:sheet}]);}
+
+// Column schemas keyed by CSV header name -> Excel type
+const XSPEC={
+ date:{h:'Date',t:'date',w:12}, time:{h:'Time',t:'time',w:14},
+ epoch_ms:{h:'Epoch (ms)',t:'text',w:16}, epoch:{h:'Epoch',t:'text',w:14},
+ sec_from_hour:{h:'Sec from hour',t:'num',w:15},
+ offset_mmss:{h:'Offset (m:ss)',t:'text',w:14},
+ peak:{h:'Peak',t:'num4',w:10}, strikes:{h:'Strikes',t:'int',w:9},
+ expected:{h:'Expected',t:'int',w:10}, valid:{h:'Valid',t:'text',w:8},
+ tempC:{h:'Temp (C)',t:'num1',w:10}, half_hour:{h:'Half hour',t:'text',w:11}};
+
+function csvToXlsx(csv,sheetName,fname){
+ const lines=csv.trim().split('\n');
+ if(lines.length<2){alert('Log is empty - nothing to export.');return;}
+ const head=lines[0].split(',');
+ const cols=head.map(h=>XSPEC[h]||{h:h,t:'text',w:14});
+ const rows=lines.slice(1).filter(l=>l.length>2).map(l=>{
+  const c=l.split(',');
+  return head.map((h,i)=>{
+   const raw=(c[i]===undefined?'':c[i]).trim(), ty=cols[i].t;
+   if(ty==='date'){const m=raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+     return m?_dser(+m[1],+m[2],+m[3]):raw;}
+   if(ty==='time'){const m=raw.match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+     if(!m)return raw;
+     const ms=m[4]?parseInt((m[4]+'00').slice(0,3),10):0;
+     return ((+m[1])*3600+(+m[2])*60+(+m[3])+ms/1000)/86400;}
+   if(ty==='num'||ty==='num4'||ty==='num1'||ty==='int'){
+     const v=parseFloat(raw); return isNaN(v)?'':v;}
+   if(h==='valid')     return raw==='1'?'yes':'no';
+   if(h==='half_hour') return raw==='1'?'yes':'no';
+   return raw;});});
+ const blob=new Blob([_xlsx(cols,rows,sheetName)],
+   {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+ const a=document.createElement('a');
+ a.href=URL.createObjectURL(blob); a.download=fname;
+ document.body.appendChild(a); a.click();
+ setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);
+}
+function dlXlsx(kind){
+ const url = kind==='drift' ? '/api/drift' : '/api/log';
+ const info=document.getElementById('logInfo');
+ if(info) info.textContent='building workbook\u2026';
+ fetch(url).then(r=>r.text()).then(t=>{
+   csvToXlsx(t, kind==='drift'?'Drift':'Chimes',
+             kind==='drift'?'drift.xlsx':'chimes.xlsx');
+   if(info) info.textContent='';
+ }).catch(()=>{if(info) info.textContent='export failed';});
+}
+
 // ---- log viewer / editor ----
 const MAXROWS=250;
 function renderLog(kind,text){
   const lines=text.trim().split('\n');
-  if(lines.length<2){document.getElementById('logInfo').textContent='log is empty';
-    document.getElementById('logWrap').style.display='none';return;}
+  if(lines.length<2){
+    document.getElementById('logWrap').style.display='none';
+    fetch('/api/logstat').then(r=>r.json()).then(d=>{
+      document.getElementById('logInfo').textContent='empty \u2014 '+d.why;
+    }).catch(()=>{document.getElementById('logInfo').textContent='log is empty';});
+    return;}
   const head=lines[0].split(',');
+  // Resolve columns BY NAME, never by fixed index: the CSV layout has changed
+  // before (date/time split into two columns) and hardcoded offsets silently
+  // sent the wrong epoch to the delete endpoint.
+  const iEpoch=head.indexOf('epoch'), iValid=head.indexOf('valid');
   let rows=lines.slice(1).filter(l=>l.length>2);
   const total=rows.length;
   rows=rows.slice(-MAXROWS).reverse();          // newest first
@@ -867,9 +1047,11 @@ function renderLog(kind,text){
           +(kind==='drift'?'<th></th>':'')+'</tr>';
   for(const r of rows){
     const c=r.split(',');
-    const invalid=(kind==='drift'&&c[5]==='0');
+    const invalid=(kind==='drift'&&iValid>=0&&c[iValid]==='0');
     html+='<tr class="'+(invalid?'bad':'')+'">'+c.map(x=>'<td>'+x+'</td>').join('');
-    if(kind==='drift') html+='<td><button class="del" data-ep="'+c[1]+'">delete</button></td>';
+    if(kind==='drift'&&iEpoch>=0)
+      html+='<td><button class="del" data-ep="'+c[iEpoch]+'">delete</button></td>';
+    else if(kind==='drift') html+='<td></td>';
     html+='</tr>';
   }
   t.innerHTML=html;

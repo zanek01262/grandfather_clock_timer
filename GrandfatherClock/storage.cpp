@@ -30,14 +30,16 @@ void storageBegin() {
 
 bool storageReady() { return g_ready; }
 
-void formatLocalMs(uint64_t epochMs, char* out, size_t n) {
+void formatLocalParts(uint64_t epochMs, char* date, size_t dn,
+                      char* timeOut, size_t tn) {
   time_t secs = (time_t)(epochMs / 1000ULL);
   unsigned ms = (unsigned)(epochMs % 1000ULL);
   struct tm tmv;
   localtime_r(&secs, &tmv);
-  char base[24];
-  strftime(base, sizeof(base), "%Y-%m-%d %H:%M:%S", &tmv);
-  snprintf(out, n, "%s.%03u", base, ms);
+  strftime(date, dn, "%Y-%m-%d", &tmv);
+  char hms[12];
+  strftime(hms, sizeof(hms), "%H:%M:%S", &tmv);
+  snprintf(timeOut, tn, "%s.%03u", hms, ms);
 }
 
 void logChime(uint64_t epochMs, float peak) {

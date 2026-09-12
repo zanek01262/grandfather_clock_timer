@@ -23,8 +23,11 @@ bool storageReady();    // true if the filesystem mounted
 // detect that by magnitude (values < 1e12 are seconds).
 void logChime(uint64_t epochMs, float peak);
 
-// Format epoch milliseconds as local "YYYY-MM-DD HH:MM:SS.mmm".
-// `out` must be >= 28 bytes.
-void formatLocalMs(uint64_t epochMs, char* out, size_t n);
+// Split epoch milliseconds into local date and time strings, kept SEPARATE
+// so spreadsheets parse each column as a real date / time instead of text.
+//   date -> "YYYY-MM-DD"      (>= 12 bytes)
+//   time -> "HH:MM:SS.mmm"    (>= 14 bytes)
+void formatLocalParts(uint64_t epochMs, char* date, size_t dn,
+                      char* timeOut, size_t tn);
 
 #endif // STORAGE_H

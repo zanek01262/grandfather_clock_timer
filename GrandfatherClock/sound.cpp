@@ -45,6 +45,11 @@ static float    g_peakHold = 0.0f;
 static uint32_t g_lastSampleUs = 0;
 static uint32_t g_lastChimeMs  = 0;
 
+// Pending chime: a strike has triggered and we are still measuring its peak.
+static bool     g_pending      = false;
+static uint32_t g_pendingOnset = 0;
+static float    g_pendingPeak  = 0.0f;
+
 // gain-calibration rolling window accumulators
 static uint16_t g_rawMinAcc   = 1023;
 static uint16_t g_rawMaxAcc   = 0;
@@ -52,6 +57,12 @@ static uint16_t g_clipAcc     = 0;
 static uint32_t g_rawWinStart = 0;
 
 static SoundState g_state = {0, 0, 0, 0, 0, 0, 1023, 0, 0};
+
+// --- coarse history: one peak per second, survives browser reloads ---
+static uint16_t g_hist[HIST_SECONDS] = {0};
+static uint32_t g_histSeq   = 0;     // total seconds ever written
+static float    g_histMax   = 0.0f;
+static uint32_t g_histStart = 0;
 
 // --- scope bins: 25ms peak-holds of `excess`, ring-buffered ---
 static float    g_ring[SCOPE_RING] = {0};
@@ -110,6 +121,19 @@ void soundUpdate() {
   g_peakHold *= PEAK_DECAY;
   if (excess > g_peakHold) g_peakHold = excess;
 
+  // Coarse 1-second history accumulation (independent of the 25ms bins).
+  if (excess > g_histMax) g_histMax = excess;
+  uint32_t hms = millis();
+  if ((uint32_t)(hms - g_histStart) >= 1000) {
+    float v = g_histMax * (float)HIST_SCALE;
+    if (v < 0) v = 0;
+    if (v > 65535.0f) v = 65535.0f;
+    g_hist[g_histSeq % HIST_SECONDS] = (uint16_t)v;
+    g_histSeq++;
+    g_histMax = 0.0f;
+    g_histStart = hms;
+  }
+
   // Scope bin accumulation: keep the max excess seen in each 25ms window.
   if (excess > g_binMax) g_binMax = excess;
   uint32_t ms0 = millis();
@@ -128,14 +152,27 @@ void soundUpdate() {
   // Chime decision: above threshold and past the refractory window.
   uint32_t ms = millis();
   bool past = (uint32_t)(ms - g_lastChimeMs) >= settings.refractoryMs;
-  if (excess >= settings.threshold && past) {
+  if (excess >= settings.threshold && past && !g_pending) {
     g_lastChimeMs = ms;                     // consume the trigger either way
     if (analysisLearnArmed()) {
       analysisCaptureLearn();               // learning consumes this strike
     } else if (!settings.toneEnabled || analysisVerifyTone()) {
+      // Don't report yet — a chime's envelope peaks well after it crosses
+      // the threshold. Start a measurement window and report the maximum.
+      g_pending      = true;
+      g_pendingOnset = ms;
+      g_pendingPeak  = excess;
+    }
+  }
+
+  // While a chime is pending, track its true peak, then report it.
+  if (g_pending) {
+    if (excess > g_pendingPeak) g_pendingPeak = excess;
+    if ((uint32_t)(ms - g_pendingOnset) >= CHIME_PEAK_WINDOW_MS) {
+      g_pending = false;
       g_state.chimeCount++;
-      g_state.lastChimePeak = excess;
-      if (g_cb) g_cb(excess);
+      g_state.lastChimePeak = g_pendingPeak;
+      if (g_cb) g_cb(g_pendingPeak, (uint32_t)(ms - g_pendingOnset));
     }
   }
 }
@@ -153,3 +190,23 @@ void soundGetScope(float* out, uint8_t n, uint32_t* seq) {
 }
 
 void soundNoteChimeEpoch(uint32_t epoch) { g_state.lastChimeEpoch = epoch; }
+
+uint16_t soundHistoryCount() {
+  return (g_histSeq < HIST_SECONDS) ? (uint16_t)g_histSeq : (uint16_t)HIST_SECONDS;
+}
+uint32_t soundHistorySeq() { return g_histSeq; }
+uint16_t soundHistoryAt(uint16_t i) {
+  uint16_t avail = soundHistoryCount();
+  if (i >= avail) return 0;
+  return g_hist[(g_histSeq - avail + i) % HIST_SECONDS];
+}
+
+uint16_t soundGetHistory(uint16_t* out, uint16_t maxN, uint32_t* outSeq) {
+  *outSeq = g_histSeq;
+  uint16_t avail = (g_histSeq < HIST_SECONDS) ? (uint16_t)g_histSeq : HIST_SECONDS;
+  if (avail > maxN) avail = maxN;
+  // oldest-first
+  for (uint16_t i = 0; i < avail; i++)
+    out[i] = g_hist[(g_histSeq - avail + i) % HIST_SECONDS];
+  return avail;
+}

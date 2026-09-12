@@ -38,8 +38,8 @@
 // MAJOR: breaking hardware/storage changes; MINOR: features; PATCH: fixes
 //   0.1.0 Rev010 MPU6050 | 0.2.0 Rev011 LM393/D1 Mini
 //   1.0.0 Rev012 FORIOT+SD | 1.0.1 review fixes
-//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 ambient-floor fix, ms log timestamps, log viewer/editor, adjustable X axis, tick sensitivity tool
-#define FW_VERSION "2.10.0"
+//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug)
+#define FW_VERSION "2.15.0"
 
 // ---------- SoftAP provisioning ----------
 #define AP_SSID  "GrandfatherClock-Setup"
@@ -91,6 +91,11 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 #define DEF_TZ_OFFSET    -8.0f    // Pacific
 #define DEF_TONE_RATIO    0.20f   // learned-tone energy fraction to accept
 #define STRIKE_GAP_MS     6000u   // silence that closes a strike event
+// After a strike triggers, keep tracking the envelope for this long and
+// report the MAXIMUM as the chime's peak. Reporting the value at threshold
+// crossing (the rising edge) made every chime read back at roughly the
+// threshold, so loudness differences were invisible and gain could not be set.
+#define CHIME_PEAK_WINDOW_MS 400u
 #define ENV_POLL_MS       30000u  // BME280 sample cadence (slow signals)
 
 // --- Phase B: clock-stopped detection ---
@@ -120,5 +125,13 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 #define SCOPE_BIN_MS     25    // fold 500Hz samples into 25ms peak bins
 #define SCOPE_RING       32    // bins kept firmware-side
 #define SCOPE_SEND_BINS  32    // bins per /api/state response (covers 800ms)
+
+// --- Long-term history (device side) ---
+// The 25ms scope stream lives only in the browser and dies on refresh, so
+// long windows would start empty. The device also keeps a coarse ring of
+// one peak per second, which survives page reloads and can be fetched whole.
+// 3600 entries x uint16 = 7.2 KB static (BSS, not heap).
+#define HIST_SECONDS     3600  // 1 hour of 1-second peak bins
+#define HIST_SCALE       10000 // stored as uint16: excess * 10000, clamped
 
 #endif // CONFIG_H
