@@ -176,7 +176,8 @@ sensitivity model. Web dashboard + OLED, provisioned over a SoftAP splash.
 - **storage**: LittleFS; chime log `/chimes.csv` rotates at 128KB to
   `/chimes.old.csv`; `/api/log` streams old+current stitched.
 - **settings**: hand-rolled JSON at `/config.json` (no ArduinoJson): wifi
-  creds, threshold, refractoryMs, tzOffset, toneEnabled, toneF1/F2, toneRatio.
+  creds, threshold, refractoryMs, tz (POSIX rule incl. DST; migrated from the
+  legacy fixed tzOffset), toneEnabled, toneF1/F2, toneRatio.
 - **display**: context screens (setup AP info / connecting / connected-IP /
   live meters / 700ms CHIME banner). Wire at 400kHz (~6ms full-frame).
 - **provisioning**: no creds (or STA fail) → SoftAP `GrandfatherClock-Setup`,
@@ -199,7 +200,7 @@ sensitivity model. Web dashboard + OLED, provisioned over a SoftAP splash.
 `/` dashboard · `/api/state` (level/ambient/peak/threshold/chimes/lastChime/
 epoch/fw/scopeFrom/scopeSeq/scope[]; `?since=<bin>` returns only bins the page
 hasn't seen, max 64 per response) · `/api/config` GET/POST (threshold, refractoryMs,
-tzOffset, toneEnabled, toneRatio) · `/api/log`, `/api/drift` CSV ·
+tz, toneEnabled, toneRatio; GET also returns device localTime) · `/api/log`, `/api/drift` CSV ·
 `/api/learn/start` POST, `/api/learn/status` · `/api/adjust` POST turns ·
 `/api/horology` · `/api/reset`. AP mode: `/`, `/scan`, `/rescan`, `/save`.
 
