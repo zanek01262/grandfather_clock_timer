@@ -10,7 +10,8 @@
      "pass":"kilobyte",
      "threshold":0.1800,
      "refractoryMs":1200,
-     "tzOffset":-8.00
+     "tzOffset":-8.00,
+     "tz":"PST8PDT,M3.2.0,M11.1.0"
    }
    ===================================================================== */
 #include "settings.h"
@@ -25,6 +26,7 @@ static void applyDefaults() {
   settings.threshold     = DEF_THRESHOLD;
   settings.refractoryMs  = DEF_REFRACTORY_MS;
   settings.tzOffsetHours = DEF_TZ_OFFSET;
+  settings.tz            = DEF_TZ;
   settings.toneEnabled   = 0;
   settings.toneF1        = 0;
   settings.toneF2        = 0;
@@ -75,6 +77,24 @@ static String jsonEscape(const String& s) {
   return o;
 }
 
+bool tzValid(const String& tz) {
+  if (tz.length() < 3 || tz.length() > 47) return false;
+  for (size_t i = 0; i < tz.length(); i++) {
+    char c = tz[i];
+    if (!isalnum((unsigned char)c) && !strchr("<>+-,.:/", c)) return false;
+  }
+  return true;
+}
+
+String tzFromOffset(float hours) {
+  if (fabsf(hours - DEF_TZ_OFFSET) < 0.01f) return DEF_TZ;   // old default
+  int m = (int)lroundf(-hours * 60.0f);   // POSIX offsets are west-positive
+  int am = m < 0 ? -m : m;
+  char b[24];
+  snprintf(b, sizeof(b), "UTC%s%d:%02d", m < 0 ? "-" : "", am / 60, am % 60);
+  return String(b);
+}
+
 void loadSettings() {
   applyDefaults();
   if (!storageReady()) return;
@@ -93,6 +113,9 @@ void loadSettings() {
   if (findValue(src, "threshold", v))    settings.threshold     = v.toFloat();
   if (findValue(src, "refractoryMs", v)) settings.refractoryMs  = (uint32_t)v.toInt();
   if (findValue(src, "tzOffset", v))     settings.tzOffsetHours = v.toFloat();
+  // Configs from before 2.16.1 have only the fixed offset: migrate it.
+  if (findValue(src, "tz", v) && tzValid(v)) settings.tz = v;
+  else                                       settings.tz = tzFromOffset(settings.tzOffsetHours);
   if (findValue(src, "toneEnabled", v))  settings.toneEnabled   = (uint8_t)v.toInt();
   if (findValue(src, "toneF1", v))       settings.toneF1        = v.toFloat();
   if (findValue(src, "toneF2", v))       settings.toneF2        = v.toFloat();
@@ -116,6 +139,7 @@ bool saveSettings() {
   f.print(F("  \"threshold\":"));      f.print(settings.threshold, 4);         f.print(F(",\n"));
   f.print(F("  \"refractoryMs\":"));   f.print(settings.refractoryMs);         f.print(F(",\n"));
   f.print(F("  \"tzOffset\":"));       f.print(settings.tzOffsetHours, 2);     f.print(F(",\n"));
+  f.print(F("  \"tz\":\""));           f.print(settings.tz);                   f.print(F("\",\n"));
   f.print(F("  \"toneEnabled\":"));    f.print(settings.toneEnabled);          f.print(F(",\n"));
   f.print(F("  \"toneF1\":"));         f.print(settings.toneF1, 1);            f.print(F(",\n"));
   f.print(F("  \"toneF2\":"));         f.print(settings.toneF2, 1);            f.print(F(",\n"));

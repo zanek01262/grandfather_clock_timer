@@ -23,7 +23,8 @@ struct SoundState {
 };
 
 // Fired once per confirmed chime, AFTER its peak window closes, so `peak`
-// is the true maximum rather than the threshold-crossing value.
+// is the true maximum rather than the threshold-crossing value. Only ever
+// called from soundUpdate(), never from soundSampleOnly().
 // `onsetAgeMs` is how long ago the strike actually began — callers subtract
 // it to timestamp the onset, keeping strike timing accurate.
 typedef void (*ChimeCallback)(float peak, uint32_t onsetAgeMs);
@@ -49,8 +50,16 @@ uint32_t   soundHistorySeq();                   // total seconds ever recorded
 // HIST_BINS bins, so entry i (0 = oldest of n) starts at
 // end - (n - i) * HIST_BINS.
 uint32_t   soundHistoryEndBin();
-uint16_t   soundHistoryAt(uint16_t i);          // i = 0 is oldest
+// Entry by ABSOLUTE number k (0 = first entry since boot), so a reader that
+// keeps sampling while it streams isn't shifted by entries added meanwhile.
+// Caller keeps k within the last HIST_SECONDS entries.
+uint16_t   soundHistoryAtSeq(uint32_t k);
 void       soundUpdate();          // call often in loop(); self-paced
+// Same sampling and detection, but completed chimes stay queued instead of
+// reaching the callback. For long HTTP handlers (log streaming) so the
+// detector keeps listening without the callback writing to the logs being
+// read. The next soundUpdate() delivers them with their true onset times.
+void       soundSampleOnly();
 SoundState soundGetState();
 void       soundNoteChimeEpoch(uint32_t epoch);  // optional external stamp
 

@@ -38,8 +38,8 @@
 // MAJOR: breaking hardware/storage changes; MINOR: features; PATCH: fixes
 //   0.1.0 Rev010 MPU6050 | 0.2.0 Rev011 LM393/D1 Mini
 //   1.0.0 Rev012 FORIOT+SD | 1.0.1 review fixes
-//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold) | 2.15.2 live-plot gaps backfilled from bin-aligned history | 2.16.0 sampling telemetry, OLED at 2 Hz, peak-hold envelope (peaks read ~20-35% higher: re-check threshold)
-#define FW_VERSION "2.16.0"
+//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold) | 2.15.2 live-plot gaps backfilled from bin-aligned history | 2.16.0 sampling telemetry, OLED at 2 Hz, peak-hold envelope (peaks read ~20-35% higher: re-check threshold) | 2.16.1 POSIX time zone with DST + UI, AP-mode retry of saved WiFi, detector keeps sampling during log streaming, tick listen guarded near the hour
+#define FW_VERSION "2.16.1"
 
 // ---------- SoftAP provisioning ----------
 #define AP_SSID  "GrandfatherClock-Setup"
@@ -48,6 +48,12 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 
 // ---------- WiFi station ----------
 #define WIFI_CONNECT_TIMEOUT_MS  15000UL
+// Fallback AP mode with saved credentials retries the saved network (only
+// while no phone is on the setup AP) and reboots into normal mode once it
+// joins. A power cut takes the router down too; it needs minutes to come
+// back, far longer than the boot-time join timeout above.
+#define AP_RETRY_EVERY_MS        60000UL
+#define AP_RETRY_JOIN_MS         20000UL
 
 // ---- Optional static IP (uncomment + fill to enable) ----
 // #define USE_STATIC_IP
@@ -88,7 +94,10 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 // ---------- Sound detection defaults ----------
 #define DEF_THRESHOLD     0.18f   // envelope above ambient to call a chime (0..1)
 #define DEF_REFRACTORY_MS 1200u   // ignore window after a chime
-#define DEF_TZ_OFFSET    -8.0f    // Pacific
+#define DEF_TZ_OFFSET    -8.0f    // legacy fixed offset; only used to migrate old configs
+// POSIX TZ rule (same strings as the core's TZ.h). Includes daylight saving,
+// which the old fixed hour offset could not express.
+#define DEF_TZ           "PST8PDT,M3.2.0,M11.1.0"   // US Pacific
 #define DEF_TONE_RATIO    0.20f   // learned-tone energy fraction to accept
 #define STRIKE_GAP_MS     6000u   // silence that closes a strike event
 // After a strike triggers, keep tracking the envelope for this long and

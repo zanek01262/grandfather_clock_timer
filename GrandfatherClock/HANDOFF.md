@@ -141,7 +141,8 @@ drift is near zero, the user hand-sets the minute hand once and it stays.
 
 **AP mode:** `/` · `/scan` · `/rescan` · `/save`
 
-`/api/config` POST accepts: `threshold`, `refractoryMs`, `tzOffset`,
+`/api/config` POST accepts: `threshold`, `refractoryMs`, `tz` (POSIX TZ rule
+with DST, e.g. `PST8PDT,M3.2.0,M11.1.0`; legacy `tzOffset` still accepted),
 `toneEnabled`, `toneRatio`, `halfHour`, `windDays`, `tickEnabled`.
 
 ---
@@ -233,8 +234,8 @@ scope streaming, OLED, tap-level chime detection, gain calibration tool.
   per 12 s window means the escapement is being heard.
 
 **Suggested next steps:**
-- Periodic STA retry from AP fallback (self-heal after a router outage; today
-  a boot during an outage parks the device in setup mode until rebooted)
+- ~~Periodic STA retry from AP fallback~~ — done in 2.16.1: with saved creds and
+  no AP clients, retries every 60 s and reboots into STA mode once it joins
 - Drift/offset history chart on the dashboard, with adjustment markers
 - Phase F leftovers: clock profiles + exportable service report
 - Health trending (strike amplitude / decay over months → "service due")

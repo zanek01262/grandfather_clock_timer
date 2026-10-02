@@ -62,9 +62,11 @@ uint32_t g_rebootAt = 0;
 static bool timeSynced = false;
 
 static void startNTP() {
-  // TZ offset handled via configTime; DST kept simple (user is Pacific).
-  configTime((int)(settings.tzOffsetHours * 3600), 0,
-             "pool.ntp.org", "time.nist.gov");
+  // POSIX TZ rule, so daylight saving switches by itself. The old
+  // configTime(offset, 0, ...) form has no DST rules: during PDT local time
+  // ran an hour behind, the expected strike count was one short, and every
+  // hourly measurement was marked invalid.
+  configTime(settings.tz.c_str(), "pool.ntp.org", "time.nist.gov");
 }
 
 // 64-bit epoch milliseconds, guarded against 32-bit overflow + garbage NTP.
@@ -84,6 +86,22 @@ unsigned long long epochMillis() {
 
 bool timeIsValid() {
   return (unsigned long)time(nullptr) >= NTP_MIN_EPOCH;
+}
+
+// True when a blocking A0 capture (tick measurement or listening) would
+// deafen the strike detector at a bad moment: a strike sequence is open, or
+// :00 (and :30 in half-hour mode) is within TICK_STRIKE_GUARD_S.
+static bool strikeRiskNow() {
+  if (horoEventOpen()) return true;
+  if (!timeIsValid()) return false;
+  long secsIntoHour = (long)(time(nullptr) % 3600);
+  long toHour = (secsIntoHour <= 1800) ? secsIntoHour : 3600 - secsIntoHour;
+  if (toHour < TICK_STRIKE_GUARD_S) return true;             // near :00
+  if (settings.halfHourStrike) {
+    long d = secsIntoHour - 1800;
+    if ((d < 0 ? -d : d) < TICK_STRIKE_GUARD_S) return true; // near :30
+  }
+  return false;
 }
 
 // =====================================================================
@@ -188,15 +206,30 @@ static void handleState() {
 }
 
 static void handleConfigGet() {
+  // Device-local time, so the page can show whether the time zone is right.
+  char lt[32] = "";
+  if (timeIsValid()) {
+    time_t now = time(nullptr);
+    struct tm tmv;
+    localtime_r(&now, &tmv);
+    strftime(lt, sizeof(lt), "%Y-%m-%d %H:%M %Z", &tmv);
+  }
   String j = "{";
   j += "\"threshold\":"   + String(settings.threshold, 4) + ",";
   j += "\"refractoryMs\":" + String(settings.refractoryMs) + ",";
-  j += "\"tzOffset\":"    + String(settings.tzOffsetHours, 2);
+  j += "\"tzOffset\":"    + String(settings.tzOffsetHours, 2) + ",";
+  j += "\"tz\":\""        + settings.tz + "\",";      // tzValid(): no quotes
+  j += "\"localTime\":\"" + String(lt) + "\"";
   j += "}";
   server.send(200, "application/json", j);
 }
 
 static void handleConfigSet() {
+  // Validate before changing anything, so a bad request applies nothing.
+  if (server.hasArg("tz") && !tzValid(server.arg("tz"))) {
+    server.send(400, "application/json", "{\"ok\":false,\"err\":\"bad tz\"}");
+    return;
+  }
   if (server.hasArg("threshold"))
     settings.threshold = server.arg("threshold").toFloat();
   if (server.hasArg("refractoryMs"))
@@ -214,8 +247,12 @@ static void handleConfigSet() {
     horoSetWindDays(settings.windDays);
   ticksSetNominal(settings.tickNominal);
   }
-  if (server.hasArg("tzOffset")) {
+  if (server.hasArg("tz")) {
+    settings.tz = server.arg("tz");
+    startNTP();
+  } else if (server.hasArg("tzOffset")) {          // legacy fixed offset
     settings.tzOffsetHours = server.arg("tzOffset").toFloat();
+    settings.tz = tzFromOffset(settings.tzOffsetHours);
     startNTP();
   }
   bool ok = saveSettings();
@@ -263,6 +300,9 @@ static void handleLog() {
                        d, t, secs, msPart, fromHour, (double)pk);
       server.sendContent(row, n);
       yield();
+      // A big log takes seconds to stream and loop() isn't running, so keep
+      // the detector listening (chimes are queued, not logged, until done).
+      soundSampleOnly();
     }
     f.close();
   }
@@ -345,7 +385,7 @@ static void handleTickLog() {
   server.send(200, "text/csv", "epoch,beat,rate,beatErrorMs,amplitude\n");
   File f = LittleFS.open(TICK_LOG_PATH, "r");
   if (f) { uint8_t bb[256]; int n;
-    while ((n=f.read(bb,sizeof(bb)))>0){ server.sendContent((const char*)bb,n); yield(); }
+    while ((n=f.read(bb,sizeof(bb)))>0){ server.sendContent((const char*)bb,n); yield(); soundSampleOnly(); }
     f.close(); }
   server.sendContent("");
 }
@@ -379,6 +419,15 @@ static void handleGain() {
 }
 
 static void handleTickListen() {
+  // Listening blocks the chime detector for the whole window (up to 20 s),
+  // so refuse it where a strike could be missed — same guard as the
+  // scheduled tick captures.
+  if (strikeRiskNow()) {
+    server.send(409, "application/json",
+      "{\"busy\":1,\"advice\":\"Too close to the hour, or a strike is in progress. "
+      "Listening would deafen the chime detector - try again in a couple of minutes.\"}");
+    return;
+  }
   float win = server.hasArg("s") ? server.arg("s").toFloat() : 6.0f;
   TickDiag d = ticksDiagnose(win);
   static const char* V[] = {"silent","faint","good","noisy"};
@@ -422,7 +471,6 @@ static void handleHistory() {
     long want = server.arg("n").toInt();
     if (want >= 0 && want < (long)avail) n = (uint16_t)want;
   }
-  uint16_t skip = avail - n;
   uint32_t seq  = soundHistorySeq();
   // Scope bin where the first returned entry starts (entries are HIST_BINS
   // bins each), so the page can line entries up with its 25ms trace.
@@ -436,15 +484,19 @@ static void handleHistory() {
                     (unsigned long)firstBin, (unsigned)HIST_BINS);
   server.sendContent(head, hn);   // scale, total seconds, count, firstBin, binsPerEntry
 
+  // Entries are read by absolute number: sampling continues during the
+  // stream (soundSampleOnly), and new entries must not shift what we send.
+  uint32_t firstSeq = seq - n;
   char chunk[256]; int used = 0;
   for (uint16_t i = 0; i < n; i++) {
     int w = snprintf(chunk + used, sizeof(chunk) - used,
-                     "%u%s", soundHistoryAt(skip + i), (i + 1 < n) ? "," : "");
+                     "%u%s", soundHistoryAtSeq(firstSeq + i), (i + 1 < n) ? "," : "");
     if (w < 0) break;
     used += w;
     if (used > (int)sizeof(chunk) - 12) {          // flush before overflow
       server.sendContent(chunk, used); used = 0; yield();
     }
+    soundSampleOnly();                             // keep the detector listening
   }
   if (used > 0) server.sendContent(chunk, used);
   server.sendContent("");
@@ -521,6 +573,7 @@ static void handleDrift() {
                        (double)((got>=6)?tc:-100.0f), (got>=7)?hh:0);
       server.sendContent(row, n);
       yield();
+      soundSampleOnly();               // keep listening while streaming
     }
     f.close();
   }
@@ -574,6 +627,37 @@ static void startAPMode() {
   server.begin();
 
   displaySetupScreen(AP_SSID, AP_IP.toString());
+}
+
+// Fallback AP mode is also where the device lands after a power cut that
+// took the router down too: the ESP8266 boots in seconds, the router takes
+// minutes, and the boot-time join times out. While nobody is on the setup
+// page, keep retrying the saved network and reboot into normal mode once it
+// joins. A join attempt moves the radio to the router's channel, which would
+// drop a phone on the setup AP, so it only runs with zero AP clients and is
+// abandoned the moment one connects.
+static void apRetrySavedNetwork() {
+  static uint32_t lastTry = 0, tryStart = 0;
+  static bool trying = false;
+  if (settings.wifiSsid.length() == 0 || g_rebootAt) return;
+  uint8_t clients = WiFi.softAPgetStationNum();
+  if (trying) {
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println(F("[AP] saved network is back -> rebooting into normal mode"));
+      g_rebootAt = millis() + 500;
+    } else if (clients > 0 || millis() - tryStart > AP_RETRY_JOIN_MS) {
+      WiFi.disconnect();   // stop join retries hopping the AP's channel
+      trying  = false;
+      lastTry = millis();
+    }
+    return;
+  }
+  if (clients == 0 && millis() - lastTry > AP_RETRY_EVERY_MS) {
+    Serial.println(F("[AP] retrying saved network"));
+    WiFi.begin(settings.wifiSsid.c_str(), settings.wifiPass.c_str());
+    trying   = true;
+    tryStart = millis();
+  }
 }
 
 static bool startSTAMode() {
@@ -696,6 +780,7 @@ void setup() {
 void loop() {
   if (apMode) {
     dnsServer.processNextRequest();
+    apRetrySavedNetwork();
     static uint32_t lastApLog = 0;
     if (millis() - lastApLog > 5000) {
       lastApLog = millis();
@@ -718,18 +803,7 @@ void loop() {
     // whenever a sequence is open or one is imminent. Hour-strike accuracy
     // is the primary mission; tick sampling yields to it.
     static uint32_t lastTick = 0;
-    bool strikeRisk = horoEventOpen();
-    if (!strikeRisk && timeIsValid()) {
-      long secsIntoHour = (long)(time(nullptr) % 3600);
-      long toHour = (secsIntoHour <= 1800) ? secsIntoHour : 3600 - secsIntoHour;
-      if (toHour < TICK_STRIKE_GUARD_S) strikeRisk = true;      // near :00
-      if (settings.halfHourStrike) {
-        long d = secsIntoHour - 1800;
-        long toHalf = (d < 0) ? -d : d;
-        if (toHalf < TICK_STRIKE_GUARD_S) strikeRisk = true;    // near :30
-      }
-    }
-    if (settings.tickEnabled && !strikeRisk &&
+    if (settings.tickEnabled && !strikeRiskNow() &&
         (millis() - lastTick > TICK_CAPTURE_INTERVAL_MS || ticksArmed())) {
       lastTick = millis();
       ticksCapture();

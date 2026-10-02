@@ -547,6 +547,26 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
 
       <div class="panel">
         <h2>Logs &amp; device</h2>
+        <div class="ctl" style="margin:0 0 14px;flex-wrap:wrap" data-help="tt:Time zone|Sets local time for the expected strike count and the log timestamps, including daylight saving. Check that the device time shown matches the real time.">
+          <label>Time zone</label>
+          <select id="tzSel" class="tsel">
+            <option value="PST8PDT,M3.2.0,M11.1.0">US Pacific</option>
+            <option value="MST7MDT,M3.2.0,M11.1.0">US Mountain</option>
+            <option value="MST7">US Arizona</option>
+            <option value="CST6CDT,M3.2.0,M11.1.0">US Central</option>
+            <option value="EST5EDT,M3.2.0,M11.1.0">US Eastern</option>
+            <option value="AKST9AKDT,M3.2.0,M11.1.0">Alaska</option>
+            <option value="HST10">Hawaii</option>
+            <option value="GMT0BST,M3.5.0/1,M10.5.0">UK / Ireland</option>
+            <option value="CET-1CEST,M3.5.0,M10.5.0/3">Central Europe</option>
+            <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Eastern Europe</option>
+            <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">Australia Eastern</option>
+            <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">New Zealand</option>
+            <option value="UTC0">UTC</option>
+          </select>
+          <span class="hk" id="tzNow"></span>
+          <span class="saved" id="tzSaved">saved &#10003;</span>
+        </div>
         <div class="actions">
           <button class="btn primary" onclick="dlXlsx('chimes')">Chime log (Excel)</button>
           <button class="btn primary" onclick="dlXlsx('drift')">Drift log (Excel)</button>
@@ -848,9 +868,30 @@ const ref=document.getElementById('ref'),refV=document.getElementById('refV');
 // the slider, so an unapplied value made logged chimes appear below it.
 thr.oninput=()=>{thrV.textContent=(+thr.value).toFixed(3);thrPreview=+thr.value;};
 ref.oninput=()=>{refV.textContent=ref.value+'ms';};
+// ---- time zone (POSIX TZ rule, so daylight saving is automatic) ----
+const tzSel=document.getElementById('tzSel');
+function showTz(c){
+  if(!c.tz)return;
+  if(![...tzSel.options].some(o=>o.value===c.tz)){   // a rule set by hand: list it
+    const o=document.createElement('option');o.value=c.tz;o.textContent=c.tz;tzSel.appendChild(o);
+  }
+  tzSel.value=c.tz;
+  document.getElementById('tzNow').textContent=c.localTime?'device time '+c.localTime:'device time: waiting for NTP';
+}
+tzSel.onchange=function(){
+  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'tz='+encodeURIComponent(this.value)})
+    .then(r=>r.json()).then(j=>{
+      if(!j.ok)return;
+      const s=document.getElementById('tzSaved');s.classList.add('show');
+      setTimeout(()=>s.classList.remove('show'),1200);
+      return fetch('/api/config').then(r=>r.json()).then(showTz);
+    });
+};
 fetch('/api/config').then(r=>r.json()).then(c=>{
   thr.value=c.threshold;thrV.textContent=(+c.threshold).toFixed(3);threshold=+c.threshold;
   ref.value=c.refractoryMs;refV.textContent=c.refractoryMs+'ms';
+  showTz(c);
 });
 document.getElementById('apply').onclick=()=>{
   const body='threshold='+thr.value+'&refractoryMs='+ref.value;
@@ -1005,6 +1046,11 @@ document.getElementById('tickListen').onclick=function(){
   fetch('/api/tick/listen?s='+secs,{method:'POST'}).then(r=>r.json()).then(d=>{
     st.textContent='';
     const v=document.getElementById('tlVerdict');
+    if(d.busy){                      // refused: a strike is due or under way
+      v.textContent='Not now';v.className='gverdict low';
+      document.getElementById('tlAdvice').textContent=d.advice;
+      return;
+    }
     v.textContent=d.verdict.charAt(0).toUpperCase()+d.verdict.slice(1);
     v.className='gverdict '+(d.verdict==='good'?'good':(d.verdict==='noisy'?'hot':'low'));
     document.getElementById('tlAdvice').textContent=d.advice;

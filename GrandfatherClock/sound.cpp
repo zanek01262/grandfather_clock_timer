@@ -107,7 +107,16 @@ void soundBegin(ChimeCallback cb) {
   g_lastSampleUs = micros();
 }
 
-void soundUpdate() {
+// Completed chimes wait here until delivered to the callback. soundUpdate()
+// delivers at once; soundSampleOnly() (used inside HTTP handlers that stream
+// log files) leaves them queued so the callback's file writes and log
+// rotation never run underneath an open log being streamed.
+#define CHIME_QUEUE 16
+static float    g_qPeak[CHIME_QUEUE];
+static uint32_t g_qOnsetMs[CHIME_QUEUE];
+static uint8_t  g_qN = 0;
+
+static void sampleIfDue() {
   uint32_t now = micros();
   // Handle micros() wrap safely with unsigned subtraction.
   uint32_t gapUs = now - g_lastSampleUs;
@@ -214,10 +223,23 @@ void soundUpdate() {
       g_pending = false;
       g_state.chimeCount++;
       g_state.lastChimePeak = g_pendingPeak;
-      if (g_cb) g_cb(g_pendingPeak, (uint32_t)(ms - g_pendingOnset));
+      if (g_qN < CHIME_QUEUE) {
+        g_qPeak[g_qN] = g_pendingPeak; g_qOnsetMs[g_qN] = g_pendingOnset; g_qN++;
+      }
     }
   }
 }
+
+void soundUpdate() {
+  sampleIfDue();
+  // Onset age is measured at delivery, so a chime that waited in the queue
+  // is still timestamped at its true onset.
+  for (uint8_t i = 0; i < g_qN; i++)
+    if (g_cb) g_cb(g_qPeak[i], (uint32_t)(millis() - g_qOnsetMs[i]));
+  g_qN = 0;
+}
+
+void soundSampleOnly() { sampleIfDue(); }
 
 SoundState soundGetState() { return g_state; }
 
@@ -233,10 +255,9 @@ uint16_t soundHistoryCount() {
 }
 uint32_t soundHistorySeq() { return g_histSeq; }
 uint32_t soundHistoryEndBin() { return g_histEndBin; }
-uint16_t soundHistoryAt(uint16_t i) {
-  uint16_t avail = soundHistoryCount();
-  if (i >= avail) return 0;
-  return g_hist[(g_histSeq - avail + i) % HIST_SECONDS];
+uint16_t soundHistoryAtSeq(uint32_t k) {
+  if (k >= g_histSeq || g_histSeq - k > HIST_SECONDS) return 0;   // not retained
+  return g_hist[k % HIST_SECONDS];
 }
 
 uint16_t soundGetHistory(uint16_t* out, uint16_t maxN, uint32_t* outSeq) {
