@@ -38,8 +38,8 @@
 // MAJOR: breaking hardware/storage changes; MINOR: features; PATCH: fixes
 //   0.1.0 Rev010 MPU6050 | 0.2.0 Rev011 LM393/D1 Mini
 //   1.0.0 Rev012 FORIOT+SD | 1.0.1 review fixes
-//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug)
-#define FW_VERSION "2.15.0"
+//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold) | 2.15.2 live-plot gaps backfilled from bin-aligned history | 2.16.0 sampling telemetry, OLED at 2 Hz, peak-hold envelope (peaks read ~20-35% higher: re-check threshold)
+#define FW_VERSION "2.16.0"
 
 // ---------- SoftAP provisioning ----------
 #define AP_SSID  "GrandfatherClock-Setup"
@@ -121,10 +121,23 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 #define TICK_STRIKE_GUARD_S      90L
 #define SAMPLE_INTERVAL_US 2000   // ~500 Hz
 
+// OLED refresh period. A full-frame I2C push is 1 KB (~23 ms at 400 kHz) and
+// blocks loop(), so the mic is not sampled meanwhile. At the old 100 ms that
+// was ~25% of all time — enough to blur or miss short sounds and to time a
+// strike onset up to ~25 ms late. 500 ms cuts it to ~5%; the 700 ms CHIME
+// banner still shows. The gain panel's "longest gap" reports the real cost.
+#define OLED_REFRESH_MS  500
+
 // ---------- Scope trace streaming ----------
 #define SCOPE_BIN_MS     25    // fold 500Hz samples into 25ms peak bins
-#define SCOPE_RING       32    // bins kept firmware-side
-#define SCOPE_SEND_BINS  32    // bins per /api/state response (covers 800ms)
+// The page polls ~5x/s, but one slow response (WiFi modem-sleep, a TCP
+// retransmit, a flash write) easily takes over a second. The old 32-bin
+// (800ms) ring silently dropped every bin older than that, so a chime that
+// was detected and logged could be missing from the plot. The ring now holds
+// ~6.4s and the client asks for exactly the bins it lacks (?since=), so a
+// stall is caught up on the next poll instead of lost.
+#define SCOPE_RING       256   // bins kept firmware-side (~6.4s); power of 2
+#define SCOPE_SEND_BINS  64    // max bins per /api/state; client re-polls to catch up
 
 // --- Long-term history (device side) ---
 // The 25ms scope stream lives only in the browser and dies on refresh, so
@@ -133,5 +146,9 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 // 3600 entries x uint16 = 7.2 KB static (BSS, not heap).
 #define HIST_SECONDS     3600  // 1 hour of 1-second peak bins
 #define HIST_SCALE       10000 // stored as uint16: excess * 10000, clamped
+// Each history entry is exactly this many scope bins, so the page can map a
+// scope bin to the entry covering it and patch gaps in the live trace (e.g.
+// after a background tab was throttled to one poll a minute).
+#define HIST_BINS        (1000 / SCOPE_BIN_MS)
 
 #endif // CONFIG_H

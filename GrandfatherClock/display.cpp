@@ -46,7 +46,10 @@ void displayBegin() {
   digitalWrite(16, HIGH); delay(20);
 
   Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
-  Wire.setClock(400000);   // 400kHz: full-frame push ~6ms instead of ~25ms
+  // 400kHz: a full 1 KB frame is still >=23 ms of I2C (~92 ms at 100kHz),
+  // during which the mic isn't sampled. The dashboard's "longest gap"
+  // readout shows the real figure.
+  Wire.setClock(400000);
   g_ok = oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
   if (!g_ok) { Serial.println(F("[OLED] init failed")); return; }
   oled.clearDisplay();

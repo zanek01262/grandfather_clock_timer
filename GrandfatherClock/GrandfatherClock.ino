@@ -146,26 +146,43 @@ static void handleSave() {
 // ---- STA / dashboard routes -----------------------------------------
 static void handleState() {
   SoundState s = soundGetState();
-  float    sc[SCOPE_SEND_BINS];
-  uint32_t scopeSeq;
-  soundGetScope(sc, SCOPE_SEND_BINS, &scopeSeq);
+
+  // Scope bins stream incrementally: the page sends ?since=<first bin it
+  // still needs> and gets bins [scopeFrom, scopeFrom + scope.length). Sending
+  // a fixed "last N bins" dropped everything that aged out between polls.
+  uint32_t seq    = soundScopeSeq();
+  uint32_t oldest = (seq > SCOPE_RING) ? seq - SCOPE_RING : 0;
+  uint32_t from   = oldest;
+  if (server.hasArg("since")) {
+    uint32_t since = strtoul(server.arg("since").c_str(), nullptr, 10);
+    // since > seq means the device rebooted under an open page: resend all.
+    if (since > oldest && since <= seq) from = since;
+  } else if (seq - oldest > SCOPE_SEND_BINS) {
+    from = seq - SCOPE_SEND_BINS;   // cached pre-2.15.1 page: expects the newest bins
+  }
+  uint32_t to = from + SCOPE_SEND_BINS;
+  if (to > seq) to = seq;
 
   // Fixed buffer, no String concat: this runs 5x/sec for months on end,
   // and repeated String churn slowly fragments the ESP8266 heap.
-  char buf[640];
+  // Worst case ~230 header + 64 bins x 7 chars = ~680.
+  char buf[768];
   int off = snprintf(buf, sizeof(buf),
     "{\"level\":%.4f,\"ambient\":%.4f,\"peak\":%.4f,\"threshold\":%.4f,"
     "\"chimes\":%lu,\"lastChime\":%lu,\"lastPeak\":%.4f,\"timeValid\":%d,\"epoch\":%lu,"
-    "\"fw\":\"" FW_VERSION "\",\"scopeSeq\":%lu,\"scope\":[",
+    "\"fw\":\"" FW_VERSION "\",\"scopeFrom\":%lu,\"scopeSeq\":%lu,\"scope\":[",
     (double)s.level, (double)s.ambient, (double)s.peak,
     (double)settings.threshold,
     (unsigned long)s.chimeCount, (unsigned long)s.lastChimeEpoch,
     (double)s.lastChimePeak,
     timeIsValid() ? 1 : 0, (unsigned long)time(nullptr),
-    (unsigned long)scopeSeq);
-  for (int i = 0; i < SCOPE_SEND_BINS && off < (int)sizeof(buf) - 12; i++)
-    off += snprintf(buf + off, sizeof(buf) - off, "%s%.3f",
-                    i ? "," : "", (double)sc[i]);
+    (unsigned long)from, (unsigned long)seq);
+  // 4 decimals, same as the chime log, so a logged peak and its plotted bin
+  // agree (at %.3f a peak just over threshold could plot exactly on the line).
+  // A truncated array is safe: the page re-requests from where it stopped.
+  for (uint32_t b = from; b < to && off < (int)sizeof(buf) - 12; b++)
+    off += snprintf(buf + off, sizeof(buf) - off, "%s%.4f",
+                    b > from ? "," : "", (double)soundScopeAt(b));
   snprintf(buf + off, sizeof(buf) - off, "]}");
   server.send(200, "application/json", buf);
 }
@@ -352,11 +369,12 @@ static void handleGain() {
   } else {
     verdict = "good"; advice = "Signal sits nicely between the floor and the rails. Leave it here.";
   }
-  char buf[320];
+  char buf[360];
   snprintf(buf, sizeof(buf),
     "{\"rawMin\":%u,\"rawMax\":%u,\"swing\":%d,\"clip\":%u,"
-    "\"verdict\":\"%s\",\"advice\":\"%s\"}",
-    s.rawMin, s.rawMax, swing, s.clipCount, verdict, advice);
+    "\"verdict\":\"%s\",\"advice\":\"%s\",\"sps\":%u,\"gapMs\":%.1f}",
+    s.rawMin, s.rawMax, swing, s.clipCount, verdict, advice,
+    s.sampleRate, (double)s.maxGapUs / 1000.0);
   server.send(200, "application/json", buf);
 }
 
@@ -396,20 +414,32 @@ static void handleHistory() {
   // Streamed straight out of the ring — copying it into a second
   // HIST_SECONDS buffer here cost 7.2 KB of DRAM for no benefit and risked
   // overflowing dram0_0_seg at link time.
-  uint16_t n   = soundHistoryCount();
-  uint32_t seq = soundHistorySeq();
+  // ?n=<count> returns only the newest n entries: the live plot's gap
+  // backfill needs a few hundred at most, and the full hour is ~18 KB.
+  uint16_t avail = soundHistoryCount();
+  uint16_t n     = avail;
+  if (server.hasArg("n")) {
+    long want = server.arg("n").toInt();
+    if (want >= 0 && want < (long)avail) n = (uint16_t)want;
+  }
+  uint16_t skip = avail - n;
+  uint32_t seq  = soundHistorySeq();
+  // Scope bin where the first returned entry starts (entries are HIST_BINS
+  // bins each), so the page can line entries up with its 25ms trace.
+  uint32_t firstBin = soundHistoryEndBin() - (uint32_t)n * HIST_BINS;
 
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/plain", "");
-  char head[64];
-  int hn = snprintf(head, sizeof(head), "%u,%lu,%u\n",
-                    (unsigned)HIST_SCALE, (unsigned long)seq, n);
-  server.sendContent(head, hn);          // scale, total seconds, count
+  char head[80];
+  int hn = snprintf(head, sizeof(head), "%u,%lu,%u,%lu,%u\n",
+                    (unsigned)HIST_SCALE, (unsigned long)seq, n,
+                    (unsigned long)firstBin, (unsigned)HIST_BINS);
+  server.sendContent(head, hn);   // scale, total seconds, count, firstBin, binsPerEntry
 
   char chunk[256]; int used = 0;
   for (uint16_t i = 0; i < n; i++) {
     int w = snprintf(chunk + used, sizeof(chunk) - used,
-                     "%u%s", soundHistoryAt(i), (i + 1 < n) ? "," : "");
+                     "%u%s", soundHistoryAt(skip + i), (i + 1 < n) ? "," : "");
     if (w < 0) break;
     used += w;
     if (used > (int)sizeof(chunk) - 12) {          // flush before overflow
@@ -725,9 +755,10 @@ void loop() {
   // cause of unstable WiFi / dropped clients. We don't need it there.
   if (!apMode) soundUpdate();
 
-  // Periodic OLED refresh in STA mode (live level + last chime).
+  // Periodic OLED refresh in STA mode (live level + last chime). Each push
+  // blocks mic sampling, so keep it slow — see OLED_REFRESH_MS.
   static uint32_t lastUi = 0;
-  if (!apMode && millis() - lastUi > 100) {
+  if (!apMode && millis() - lastUi > OLED_REFRESH_MS) {
     lastUi = millis();
     SoundState s = soundGetState();
     HoroStatus hs = horoGetStatus();

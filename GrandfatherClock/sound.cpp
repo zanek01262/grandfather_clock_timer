@@ -6,7 +6,7 @@
      A0 raw (0..1023)
        -> normalize to 0..1
        -> rectify around a running DC center (|x - center|)
-       -> envelope = fast EMA of the rectified signal
+       -> envelope = peak-hold of the rectified signal (instant attack)
        -> ambient  = slow EMA of the envelope (the "quiet floor")
        -> excess   = envelope - ambient
        -> if excess > threshold AND outside refractory window -> CHIME
@@ -25,7 +25,13 @@
 
 // --- EMA smoothing factors (per-sample) ---
 static const float A_CENTER  = 0.0008f;  // very slow: DC bias tracking
-static const float A_ENV     = 0.25f;    // fast: envelope follower
+// Envelope: instant attack, exponential release. AO is the raw waveform and
+// ~500 Hz is far below a chime's pitch, so each sample lands at a random
+// point in the cycle. The old EMA (alpha 0.25) averaged those and read only
+// 0.73-0.82 of the true amplitude (pitch-dependent), varying ~+/-9% between
+// identical strikes. Holding the recent maximum reads ~0.98 at any pitch with
+// ~+/-3% spread (simulated); the quiet floor rises only ~0.006 -> ~0.010.
+static const float ENV_RELEASE = 0.1f;   // per-sample, ~23 ms time constant
 // Ambient floor tracking is ASYMMETRIC and that is deliberate. A symmetric
 // EMA let a loud chime drag the "quiet floor" up with it, so for ~3.2s after
 // every strike `excess` clamped to zero and the live plot went dead — the
@@ -56,19 +62,37 @@ static uint16_t g_rawMaxAcc   = 0;
 static uint16_t g_clipAcc     = 0;
 static uint32_t g_rawWinStart = 0;
 
-static SoundState g_state = {0, 0, 0, 0, 0, 0, 1023, 0, 0};
+// sampling telemetry window accumulators
+static uint16_t g_sampleCntAcc = 0;
+static uint32_t g_gapMaxAccUs  = 0;
+static uint32_t g_rateWinStart = 0;
+
+static SoundState g_state = {0, 0, 0, 0, 0, 0, 1023, 0, 0, 0, 0};
 
 // --- coarse history: one peak per second, survives browser reloads ---
+// An entry closes every HIST_BINS scope bins rather than on its own millis()
+// timer, so entry boundaries line up exactly with scope bins and the page can
+// fill holes in its 25ms trace from here.
 static uint16_t g_hist[HIST_SECONDS] = {0};
-static uint32_t g_histSeq   = 0;     // total seconds ever written
-static float    g_histMax   = 0.0f;
-static uint32_t g_histStart = 0;
+static uint32_t g_histSeq    = 0;    // total entries ever written
+static float    g_histMax    = 0.0f;
+static uint16_t g_histBins   = 0;    // bins folded into the open entry
+static uint32_t g_histEndBin = 0;    // g_ringSeq when the newest entry closed
 
 // --- scope bins: 25ms peak-holds of `excess`, ring-buffered ---
-static float    g_ring[SCOPE_RING] = {0};
+// Stored like g_hist (excess * HIST_SCALE as uint16): half the DRAM of floats.
+static uint16_t g_ring[SCOPE_RING] = {0};
 static uint32_t g_ringSeq   = 0;      // total bins ever written
 static float    g_binMax    = 0.0f;
 static uint32_t g_binStart  = 0;
+
+// excess (0..1) -> uint16 at HIST_SCALE resolution, rounded and clamped.
+static uint16_t toScaled(float v) {
+  v = v * (float)HIST_SCALE + 0.5f;
+  if (v < 0) v = 0;
+  if (v > 65535.0f) v = 65535.0f;
+  return (uint16_t)v;
+}
 
 void soundBegin(ChimeCallback cb) {
   g_cb = cb;
@@ -86,11 +110,25 @@ void soundBegin(ChimeCallback cb) {
 void soundUpdate() {
   uint32_t now = micros();
   // Handle micros() wrap safely with unsigned subtraction.
-  if ((uint32_t)(now - g_lastSampleUs) < (uint32_t)SAMPLE_INTERVAL_US) return;
+  uint32_t gapUs = now - g_lastSampleUs;
+  if (gapUs < (uint32_t)SAMPLE_INTERVAL_US) return;
   g_lastSampleUs = now;
 
   int raw = analogRead(PIN_MIC_AO);
   float x = raw / 1023.0f;
+
+  // Sampling telemetry: reads actually achieved per second and the longest
+  // stretch without one. Anything that blocks loop() (OLED push, HTTP, flash
+  // write, tick capture) shows up here as a gap the detector was deaf for.
+  g_sampleCntAcc++;
+  if (gapUs > g_gapMaxAccUs) g_gapMaxAccUs = gapUs;
+  uint32_t rms = millis();
+  if ((uint32_t)(rms - g_rateWinStart) >= 1000) {
+    g_state.sampleRate = (uint16_t)((uint32_t)g_sampleCntAcc * 1000UL / (rms - g_rateWinStart));
+    g_state.maxGapUs   = g_gapMaxAccUs;
+    g_sampleCntAcc = 0; g_gapMaxAccUs = 0;
+    g_rateWinStart = rms;
+  }
 
   // Gain-calibration telemetry in the RAW ADC domain. Track the min/max
   // swing over a ~500ms rolling window and count near-rail (clipping)
@@ -110,8 +148,9 @@ void soundUpdate() {
   g_center += A_CENTER * (x - g_center);
   float rect = fabsf(x - g_center);
 
-  // Envelope follower (fast), ambient floor (slow).
-  g_env     += A_ENV     * (rect  - g_env);
+  // Envelope follower (peak-hold), ambient floor (slow).
+  if (rect > g_env) g_env = rect;
+  else              g_env += ENV_RELEASE * (rect - g_env);
   g_ambient += ((g_env > g_ambient) ? A_AMB_UP : A_AMB_DOWN) * (g_env - g_ambient);
 
   float excess = g_env - g_ambient;
@@ -121,27 +160,30 @@ void soundUpdate() {
   g_peakHold *= PEAK_DECAY;
   if (excess > g_peakHold) g_peakHold = excess;
 
-  // Coarse 1-second history accumulation (independent of the 25ms bins).
-  if (excess > g_histMax) g_histMax = excess;
-  uint32_t hms = millis();
-  if ((uint32_t)(hms - g_histStart) >= 1000) {
-    float v = g_histMax * (float)HIST_SCALE;
-    if (v < 0) v = 0;
-    if (v > 65535.0f) v = 65535.0f;
-    g_hist[g_histSeq % HIST_SECONDS] = (uint16_t)v;
-    g_histSeq++;
-    g_histMax = 0.0f;
-    g_histStart = hms;
-  }
-
   // Scope bin accumulation: keep the max excess seen in each 25ms window.
   if (excess > g_binMax) g_binMax = excess;
   uint32_t ms0 = millis();
   if ((uint32_t)(ms0 - g_binStart) >= (uint32_t)SCOPE_BIN_MS) {
-    g_ring[g_ringSeq % SCOPE_RING] = g_binMax;
+    g_ring[g_ringSeq % SCOPE_RING] = toScaled(g_binMax);
     g_ringSeq++;
-    g_binMax   = 0.0f;
-    g_binStart = ms0;
+
+    // Coarse history: every HIST_BINS bins make one ~1-second entry.
+    if (g_binMax > g_histMax) g_histMax = g_binMax;
+    if (++g_histBins >= HIST_BINS) {
+      g_hist[g_histSeq % HIST_SECONDS] = toScaled(g_histMax);
+      g_histSeq++;
+      g_histMax    = 0.0f;
+      g_histBins   = 0;
+      g_histEndBin = g_ringSeq;
+    }
+
+    g_binMax = 0.0f;
+    // Fixed cadence so bins average exactly SCOPE_BIN_MS and HIST_BINS of
+    // them are one second. (binStart = now made every bin ~26ms, because
+    // samples land 2ms apart.) After a long stall, resync instead of
+    // emitting a burst of catch-up bins.
+    g_binStart += SCOPE_BIN_MS;
+    if ((uint32_t)(ms0 - g_binStart) >= 1000) g_binStart = ms0;
   }
 
   // Publish live values.
@@ -179,14 +221,9 @@ void soundUpdate() {
 
 SoundState soundGetState() { return g_state; }
 
-void soundGetScope(float* out, uint8_t n, uint32_t* seq) {
-  if (n > SCOPE_RING) n = SCOPE_RING;
-  *seq = g_ringSeq;
-  for (uint8_t i = 0; i < n; i++) {
-    // oldest-first: bin (seq - n + i)
-    uint32_t idx = g_ringSeq - n + i;
-    out[i] = (g_ringSeq >= n) ? g_ring[idx % SCOPE_RING] : 0.0f;
-  }
+uint32_t soundScopeSeq() { return g_ringSeq; }
+float soundScopeAt(uint32_t bin) {
+  return g_ring[bin % SCOPE_RING] / (float)HIST_SCALE;
 }
 
 void soundNoteChimeEpoch(uint32_t epoch) { g_state.lastChimeEpoch = epoch; }
@@ -195,6 +232,7 @@ uint16_t soundHistoryCount() {
   return (g_histSeq < HIST_SECONDS) ? (uint16_t)g_histSeq : (uint16_t)HIST_SECONDS;
 }
 uint32_t soundHistorySeq() { return g_histSeq; }
+uint32_t soundHistoryEndBin() { return g_histEndBin; }
 uint16_t soundHistoryAt(uint16_t i) {
   uint16_t avail = soundHistoryCount();
   if (i >= avail) return 0;

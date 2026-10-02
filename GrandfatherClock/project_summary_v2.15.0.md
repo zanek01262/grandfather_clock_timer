@@ -147,10 +147,16 @@ sensitivity model. Web dashboard + OLED, provisioned over a SoftAP splash.
 `sound.h/.cpp`, `display.h/.cpp`, `webpages.h`, `analysis.h/.cpp`, `horology.h/.cpp`
 
 - **sound**: 500 Hz A0 sampling (STA mode only — ADC suppressed in AP mode,
-  it destabilizes WiFi); self-zeroing DC center; fast envelope vs slow ambient
-  EMA; excess = envelope−ambient; threshold + refractory trigger. Two-stage
+  it destabilizes WiFi); self-zeroing DC center; peak-hold envelope (instant
+  attack, ~23 ms release — AO is the raw waveform, sampled far below chime
+  pitch) vs slow asymmetric ambient EMA; excess = envelope−ambient; threshold +
+  refractory trigger. Samples/s and longest unsampled gap are reported on
+  `/api/gain`; OLED refreshes at 2 Hz because each push blocks sampling. Two-stage
   detection: envelope proposes, Goertzel tone gate confirms (if enabled).
-  Also folds excess into 25ms peak bins (ring of 32) for scope streaming.
+  Also folds excess into 25ms peak bins (ring of 256, ~6.4s) for scope streaming.
+  Every 40 bins (exactly 1 s; fixed bin cadence) make one 1-hour-history entry, so
+  the page backfills live-trace gaps (throttled background tab) from `/api/history?n=`,
+  whose header is `scale,seq,count,firstBin,binsPerEntry`.
 - **analysis**: DSP. Learning = armed capture of 1024 samples at ~8kHz (paced
   analogRead burst; TRUE sample rate measured with micros and used in all
   frequency math) → Hann → radix-2 FFT → top peak w/ parabolic interpolation
@@ -191,7 +197,8 @@ sensitivity model. Web dashboard + OLED, provisioned over a SoftAP splash.
 
 ## HTTP API
 `/` dashboard · `/api/state` (level/ambient/peak/threshold/chimes/lastChime/
-epoch/fw/scopeSeq/scope[]) · `/api/config` GET/POST (threshold, refractoryMs,
+epoch/fw/scopeFrom/scopeSeq/scope[]; `?since=<bin>` returns only bins the page
+hasn't seen, max 64 per response) · `/api/config` GET/POST (threshold, refractoryMs,
 tzOffset, toneEnabled, toneRatio) · `/api/log`, `/api/drift` CSV ·
 `/api/learn/start` POST, `/api/learn/status` · `/api/adjust` POST turns ·
 `/api/horology` · `/api/reset`. AP mode: `/`, `/scan`, `/rescan`, `/save`.

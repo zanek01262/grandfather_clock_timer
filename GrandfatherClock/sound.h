@@ -17,6 +17,9 @@ struct SoundState {
   uint16_t rawMin;         // min raw ADC seen in the recent window (0..1023)
   uint16_t rawMax;         // max raw ADC seen in the recent window
   uint16_t clipCount;      // samples at/near the rails in the window
+  // --- sampling telemetry (1 s window) ---
+  uint16_t sampleRate;     // A0 reads per second actually achieved
+  uint32_t maxGapUs;       // longest stretch between reads (OLED push, HTTP, flash...)
 };
 
 // Fired once per confirmed chime, AFTER its peak window closes, so `peak`
@@ -26,9 +29,11 @@ struct SoundState {
 typedef void (*ChimeCallback)(float peak, uint32_t onsetAgeMs);
 
 void       soundBegin(ChimeCallback cb);
-// Copy the most recent `n` scope bins (oldest-first) into `out`; writes the
-// sequence number of the newest bin to *seq. Bins are 25ms peak-holds.
-void       soundGetScope(float* out, uint8_t n, uint32_t* seq);
+// Scope bins: 25ms peak-holds of `excess`, numbered from boot. Bins
+// [seq - min(seq, SCOPE_RING), seq) are retained, where seq = soundScopeSeq()
+// is one past the newest bin.
+uint32_t   soundScopeSeq();
+float      soundScopeAt(uint32_t bin);   // caller keeps `bin` in the retained range
 
 // Coarse long-term history: one peak-excess value per second. Returns how
 // many entries are valid; `outSeq` receives the total seconds ever recorded
@@ -40,6 +45,10 @@ uint16_t   soundGetHistory(uint16_t* out, uint16_t maxN, uint32_t* outSeq);
 // precious DRAM and could overflow the data segment at link time).
 uint16_t   soundHistoryCount();                 // valid entries available
 uint32_t   soundHistorySeq();                   // total seconds ever recorded
+// Scope bin seq at which the newest entry closed. Every entry spans exactly
+// HIST_BINS bins, so entry i (0 = oldest of n) starts at
+// end - (n - i) * HIST_BINS.
+uint32_t   soundHistoryEndBin();
 uint16_t   soundHistoryAt(uint16_t i);          // i = 0 is oldest
 void       soundUpdate();          // call often in loop(); self-paced
 SoundState soundGetState();
