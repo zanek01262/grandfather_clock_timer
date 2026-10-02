@@ -413,20 +413,32 @@ static void handleHistory() {
   // Streamed straight out of the ring — copying it into a second
   // HIST_SECONDS buffer here cost 7.2 KB of DRAM for no benefit and risked
   // overflowing dram0_0_seg at link time.
-  uint16_t n   = soundHistoryCount();
-  uint32_t seq = soundHistorySeq();
+  // ?n=<count> returns only the newest n entries: the live plot's gap
+  // backfill needs a few hundred at most, and the full hour is ~18 KB.
+  uint16_t avail = soundHistoryCount();
+  uint16_t n     = avail;
+  if (server.hasArg("n")) {
+    long want = server.arg("n").toInt();
+    if (want >= 0 && want < (long)avail) n = (uint16_t)want;
+  }
+  uint16_t skip = avail - n;
+  uint32_t seq  = soundHistorySeq();
+  // Scope bin where the first returned entry starts (entries are HIST_BINS
+  // bins each), so the page can line entries up with its 25ms trace.
+  uint32_t firstBin = soundHistoryEndBin() - (uint32_t)n * HIST_BINS;
 
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/plain", "");
-  char head[64];
-  int hn = snprintf(head, sizeof(head), "%u,%lu,%u\n",
-                    (unsigned)HIST_SCALE, (unsigned long)seq, n);
-  server.sendContent(head, hn);          // scale, total seconds, count
+  char head[80];
+  int hn = snprintf(head, sizeof(head), "%u,%lu,%u,%lu,%u\n",
+                    (unsigned)HIST_SCALE, (unsigned long)seq, n,
+                    (unsigned long)firstBin, (unsigned)HIST_BINS);
+  server.sendContent(head, hn);   // scale, total seconds, count, firstBin, binsPerEntry
 
   char chunk[256]; int used = 0;
   for (uint16_t i = 0; i < n; i++) {
     int w = snprintf(chunk + used, sizeof(chunk) - used,
-                     "%u%s", soundHistoryAt(i), (i + 1 < n) ? "," : "");
+                     "%u%s", soundHistoryAt(skip + i), (i + 1 < n) ? "," : "");
     if (w < 0) break;
     used += w;
     if (used > (int)sizeof(chunk) - 12) {          // flush before overflow

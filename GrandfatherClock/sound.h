@@ -42,6 +42,10 @@ uint16_t   soundGetHistory(uint16_t* out, uint16_t maxN, uint32_t* outSeq);
 // precious DRAM and could overflow the data segment at link time).
 uint16_t   soundHistoryCount();                 // valid entries available
 uint32_t   soundHistorySeq();                   // total seconds ever recorded
+// Scope bin seq at which the newest entry closed. Every entry spans exactly
+// HIST_BINS bins, so entry i (0 = oldest of n) starts at
+// end - (n - i) * HIST_BINS.
+uint32_t   soundHistoryEndBin();
 uint16_t   soundHistoryAt(uint16_t i);          // i = 0 is oldest
 void       soundUpdate();          // call often in loop(); self-paced
 SoundState soundGetState();

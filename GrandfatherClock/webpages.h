@@ -567,6 +567,8 @@ const cv=document.getElementById('scope'), cx=cv.getContext('2d');
 // that was only partly overwritten showed whatever sat in a slot 5 minutes
 // earlier, so a missed chime looked like silence.)
 const N=12000, BIN_MS=25, buf=new Float32Array(N).fill(NaN);  // ring holds up to 5 min
+const coarse=new Uint8Array(N);   // 1 = patched from the device's 1-second history
+const HIST_BINS=40;               // scope bins per history entry (firmware HIST_BINS)
 let winBins=1200;                                   // visible span (user set)
 // Windows longer than the 5-minute live ring switch to HISTORY MODE: the
 // device keeps one peak per second for an hour, so a long view is populated
@@ -693,17 +695,22 @@ function drawScope(){
     cx.strokeStyle=CV('--trace');cx.lineWidth=1.5;
     cx.lineJoin='round';cx.lineCap='round';
     cx.shadowColor=CV('--traceglow');cx.shadowBlur=8;
-    cx.beginPath();let started=false;
     const first=Math.max(0,newestSeq-winBins+1);
-    for(let b=first;b<=newestSeq;b++){
-      const x=w-(pos-b)*pxPerBin;
-      if(x<-2)continue;
-      const v=buf[b%N];
-      if(v!==v){started=false;continue;}   // NaN: gap, lift the pen
-      const y=yOf(v,h);
-      started?cx.lineTo(x,y):(cx.moveTo(x,y),started=true);
+    // pass 0: 25ms bins; pass 1: stretches patched from 1-second history, fainter
+    for(let pass=0;pass<2;pass++){
+      cx.globalAlpha=pass?0.45:1;
+      cx.beginPath();let started=false;
+      for(let b=first;b<=newestSeq;b++){
+        const x=w-(pos-b)*pxPerBin;
+        if(x<-2)continue;
+        const v=buf[b%N];
+        if(v!==v||coarse[b%N]!==pass){started=false;continue;}   // NaN: gap, lift the pen
+        const y=yOf(v,h);
+        started?cx.lineTo(x,y):(cx.moveTo(x,y),started=true);
+      }
+      cx.stroke();
     }
-    cx.stroke();cx.shadowBlur=0;
+    cx.globalAlpha=1;cx.shadowBlur=0;
   }
   // scale readout
   cx.fillStyle=CV('--axis');cx.font='12px monospace';
@@ -740,18 +747,63 @@ function fmtAge(epoch,nowEpoch,valid){
 let lastChimeCount=-1, recentPeaks=[];
 // Store bins [scopeFrom, scopeFrom+scope.length); returns how many newer bins
 // the device still holds for us. Bins that aged out of the device's ring
-// before we asked become NaN gaps rather than keeping stale values.
+// before we asked become NaN gaps rather than keeping stale values, and are
+// queued for backfill from the device's 1-second history.
+let gapLo=-1, gapHi=-1;        // span of bins awaiting backfill
+let devSeq=0, bootGen=0;       // device's bin count; bumps when it reboots
 function ingestScope(s){
   const arr=s.scope||[], from=s.scopeFrom, seq=s.scopeSeq;
-  if(newestSeq>=0&&seq-1<newestSeq){buf.fill(NaN);newestSeq=-1;}   // device rebooted
-  if(newestSeq>=0)
-    for(let b=newestSeq+1,end=Math.min(from,newestSeq+1+N);b<end;b++)buf[b%N]=NaN;
-  for(let i=0;i<arr.length;i++)buf[(from+i)%N]=arr[i];
+  if(newestSeq>=0&&seq-1<newestSeq){                               // device rebooted
+    buf.fill(NaN);coarse.fill(0);newestSeq=-1;gapLo=gapHi=-1;bootGen++;
+  }
+  devSeq=seq;
+  if(newestSeq>=0&&from>newestSeq+1){
+    const lo=newestSeq+1;
+    for(let b=lo,end=Math.min(from,lo+N);b<end;b++){buf[b%N]=NaN;coarse[b%N]=0;}
+    gapLo=gapLo<0?lo:Math.min(gapLo,lo); gapHi=Math.max(gapHi,from);
+    backfill();
+  }
+  for(let i=0;i<arr.length;i++){buf[(from+i)%N]=arr[i];coarse[(from+i)%N]=0;}
   const last=from+arr.length-1;
   if(last>newestSeq){newestSeq=last;newestT=performance.now();}
   return seq-1-newestSeq;
 }
+// A throttled background tab may poll only once a minute, far longer than
+// the device's 6.4s scope ring. Fill those gaps from /api/history, whose
+// entries are exactly HIST_BINS scope bins each: every chime still shows at
+// its true peak, at 1-second resolution (drawn fainter).
+let backfilling=false;
+async function backfill(){
+  if(backfilling||gapLo<0) return;
+  backfilling=true;
+  const lo=Math.max(gapLo,newestSeq-N+1), hi=gapHi, gen=bootGen;
+  gapLo=gapHi=-1;
+  let ok=true;
+  if(hi>lo){
+    try{
+      const want=Math.ceil((devSeq-lo)/HIST_BINS)+5;
+      const t=await (await fetch('/api/history?n='+want)).text();
+      const nl=t.indexOf('\n'), hd=t.slice(0,nl).split(',');
+      const scale=+hd[0]||10000, firstBin=+hd[3], per=+hd[4];
+      const body=t.slice(nl+1).trim(), v=body?body.split(','):[];
+      if(gen===bootGen&&per>0)
+        for(let b=Math.max(lo,newestSeq-N+1);b<hi;b++){
+          if(buf[b%N]===buf[b%N]) continue;          // real 25ms data present
+          const i=Math.floor((b-firstBin)/per);
+          if(i>=0&&i<v.length){buf[b%N]=+v[i]/scale;coarse[b%N]=1;}
+        }
+    }catch(e){
+      ok=false;
+      if(gen===bootGen){gapLo=gapLo<0?lo:Math.min(gapLo,lo);gapHi=Math.max(gapHi,hi);}
+    }
+  }
+  backfilling=false;
+  if(gapLo>=0) setTimeout(backfill,ok?0:2000);   // gaps noted meanwhile, or retry
+}
+let pollBusy=false, pollTimer=0;
 async function poll(){
+  if(pollBusy) return;
+  pollBusy=true; clearTimeout(pollTimer);
   let behind=0;
   try{
     const s=await (await fetch('/api/state?since='+(newestSeq+1))).json();
@@ -777,8 +829,12 @@ async function poll(){
       document.getElementById('clock').textContent='NTP syncing…';
     }
   }catch(e){}
-  setTimeout(poll,behind>0?0:200);   // after a stall, catch up immediately
+  pollBusy=false;
+  pollTimer=setTimeout(poll,behind>0?0:200);   // after a stall, catch up immediately
 }
+// A hidden tab's next poll may be throttled up to a minute away; fetch as
+// soon as the page is looked at again.
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll();});
 
 // ---- load config, wire tuning controls ----
 const thr=document.getElementById('thr'),thrV=document.getElementById('thrV');

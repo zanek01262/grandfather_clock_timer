@@ -38,8 +38,8 @@
 // MAJOR: breaking hardware/storage changes; MINOR: features; PATCH: fixes
 //   0.1.0 Rev010 MPU6050 | 0.2.0 Rev011 LM393/D1 Mini
 //   1.0.0 Rev012 FORIOT+SD | 1.0.1 review fixes
-//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold)
-#define FW_VERSION "2.15.1"
+//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold) | 2.15.2 live-plot gaps backfilled from bin-aligned history
+#define FW_VERSION "2.15.2"
 
 // ---------- SoftAP provisioning ----------
 #define AP_SSID  "GrandfatherClock-Setup"
@@ -139,5 +139,9 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 // 3600 entries x uint16 = 7.2 KB static (BSS, not heap).
 #define HIST_SECONDS     3600  // 1 hour of 1-second peak bins
 #define HIST_SCALE       10000 // stored as uint16: excess * 10000, clamped
+// Each history entry is exactly this many scope bins, so the page can map a
+// scope bin to the entry covering it and patch gaps in the live trace (e.g.
+// after a background tab was throttled to one poll a minute).
+#define HIST_BINS        (1000 / SCOPE_BIN_MS)
 
 #endif // CONFIG_H

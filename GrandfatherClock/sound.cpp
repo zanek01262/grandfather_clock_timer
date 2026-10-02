@@ -59,10 +59,14 @@ static uint32_t g_rawWinStart = 0;
 static SoundState g_state = {0, 0, 0, 0, 0, 0, 1023, 0, 0};
 
 // --- coarse history: one peak per second, survives browser reloads ---
+// An entry closes every HIST_BINS scope bins rather than on its own millis()
+// timer, so entry boundaries line up exactly with scope bins and the page can
+// fill holes in its 25ms trace from here.
 static uint16_t g_hist[HIST_SECONDS] = {0};
-static uint32_t g_histSeq   = 0;     // total seconds ever written
-static float    g_histMax   = 0.0f;
-static uint32_t g_histStart = 0;
+static uint32_t g_histSeq    = 0;    // total entries ever written
+static float    g_histMax    = 0.0f;
+static uint16_t g_histBins   = 0;    // bins folded into the open entry
+static uint32_t g_histEndBin = 0;    // g_ringSeq when the newest entry closed
 
 // --- scope bins: 25ms peak-holds of `excess`, ring-buffered ---
 // Stored like g_hist (excess * HIST_SCALE as uint16): half the DRAM of floats.
@@ -130,24 +134,30 @@ void soundUpdate() {
   g_peakHold *= PEAK_DECAY;
   if (excess > g_peakHold) g_peakHold = excess;
 
-  // Coarse 1-second history accumulation (independent of the 25ms bins).
-  if (excess > g_histMax) g_histMax = excess;
-  uint32_t hms = millis();
-  if ((uint32_t)(hms - g_histStart) >= 1000) {
-    g_hist[g_histSeq % HIST_SECONDS] = toScaled(g_histMax);
-    g_histSeq++;
-    g_histMax = 0.0f;
-    g_histStart = hms;
-  }
-
   // Scope bin accumulation: keep the max excess seen in each 25ms window.
   if (excess > g_binMax) g_binMax = excess;
   uint32_t ms0 = millis();
   if ((uint32_t)(ms0 - g_binStart) >= (uint32_t)SCOPE_BIN_MS) {
     g_ring[g_ringSeq % SCOPE_RING] = toScaled(g_binMax);
     g_ringSeq++;
-    g_binMax   = 0.0f;
-    g_binStart = ms0;
+
+    // Coarse history: every HIST_BINS bins make one ~1-second entry.
+    if (g_binMax > g_histMax) g_histMax = g_binMax;
+    if (++g_histBins >= HIST_BINS) {
+      g_hist[g_histSeq % HIST_SECONDS] = toScaled(g_histMax);
+      g_histSeq++;
+      g_histMax    = 0.0f;
+      g_histBins   = 0;
+      g_histEndBin = g_ringSeq;
+    }
+
+    g_binMax = 0.0f;
+    // Fixed cadence so bins average exactly SCOPE_BIN_MS and HIST_BINS of
+    // them are one second. (binStart = now made every bin ~26ms, because
+    // samples land 2ms apart.) After a long stall, resync instead of
+    // emitting a burst of catch-up bins.
+    g_binStart += SCOPE_BIN_MS;
+    if ((uint32_t)(ms0 - g_binStart) >= 1000) g_binStart = ms0;
   }
 
   // Publish live values.
@@ -196,6 +206,7 @@ uint16_t soundHistoryCount() {
   return (g_histSeq < HIST_SECONDS) ? (uint16_t)g_histSeq : (uint16_t)HIST_SECONDS;
 }
 uint32_t soundHistorySeq() { return g_histSeq; }
+uint32_t soundHistoryEndBin() { return g_histEndBin; }
 uint16_t soundHistoryAt(uint16_t i) {
   uint16_t avail = soundHistoryCount();
   if (i >= avail) return 0;

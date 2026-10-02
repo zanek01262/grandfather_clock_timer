@@ -151,6 +151,9 @@ sensitivity model. Web dashboard + OLED, provisioned over a SoftAP splash.
   EMA; excess = envelope−ambient; threshold + refractory trigger. Two-stage
   detection: envelope proposes, Goertzel tone gate confirms (if enabled).
   Also folds excess into 25ms peak bins (ring of 256, ~6.4s) for scope streaming.
+  Every 40 bins (exactly 1 s; fixed bin cadence) make one 1-hour-history entry, so
+  the page backfills live-trace gaps (throttled background tab) from `/api/history?n=`,
+  whose header is `scale,seq,count,firstBin,binsPerEntry`.
 - **analysis**: DSP. Learning = armed capture of 1024 samples at ~8kHz (paced
   analogRead burst; TRUE sample rate measured with micros and used in all
   frequency math) → Hann → radix-2 FFT → top peak w/ parabolic interpolation
