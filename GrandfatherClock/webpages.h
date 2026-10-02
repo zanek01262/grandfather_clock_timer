@@ -563,7 +563,10 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
 const CV=(n)=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 // ---- scope trace: circular buffer of recent excess levels ----
 const cv=document.getElementById('scope'), cx=cv.getContext('2d');
-const N=12000, BIN_MS=25, buf=new Float32Array(N);  // ring holds up to 5 min
+// Bins never received are NaN and drawn as a blank gap. (A zero-filled ring
+// that was only partly overwritten showed whatever sat in a slot 5 minutes
+// earlier, so a missed chime looked like silence.)
+const N=12000, BIN_MS=25, buf=new Float32Array(N).fill(NaN);  // ring holds up to 5 min
 let winBins=1200;                                   // visible span (user set)
 // Windows longer than the 5-minute live ring switch to HISTORY MODE: the
 // device keeps one peak per second for an hour, so a long view is populated
@@ -585,7 +588,8 @@ function fetchHistory(){
 }
 setInterval(()=>{if(histMode)fetchHistory();},10000);
 let newestSeq=-1, newestT=0;   // absolute index + arrival time of newest bin
-let threshold=0.18;
+let threshold=0.18;            // the detector's live value, from /api/state
+let thrPreview=null;           // slider position not yet applied
 let yMode='auto';              // 'auto' or fixed top-of-scale
 let scaleType='log';           // 'lin' | 'log' — log by default: it
                                // shows quiet ticks and loud chimes at once
@@ -648,6 +652,14 @@ function drawScope(){
     cx.strokeStyle=CV('--thresh');cx.setLineDash([6,5]);
     cx.beginPath();cx.moveTo(0,ty);cx.lineTo(w,ty);cx.stroke();cx.setLineDash([]);
   }
+  // unapplied slider position, fainter, so tuning can be previewed
+  if(thrPreview!==null&&Math.abs(thrPreview-threshold)>1e-4){
+    const py=yOf(thrPreview,h);
+    if(py>=0&&py<=h){
+      cx.save();cx.globalAlpha=0.45;cx.strokeStyle=CV('--thresh');cx.setLineDash([2,4]);
+      cx.beginPath();cx.moveTo(0,py);cx.lineTo(w,py);cx.stroke();cx.restore();
+    }
+  }
   // --- history mode: draw device-supplied 1-second peaks ---
   if(histMode){
     if(histData && histData.length){
@@ -686,7 +698,9 @@ function drawScope(){
     for(let b=first;b<=newestSeq;b++){
       const x=w-(pos-b)*pxPerBin;
       if(x<-2)continue;
-      const y=yOf(buf[b%N],h);
+      const v=buf[b%N];
+      if(v!==v){started=false;continue;}   // NaN: gap, lift the pen
+      const y=yOf(v,h);
       started?cx.lineTo(x,y):(cx.moveTo(x,y),started=true);
     }
     cx.stroke();cx.shadowBlur=0;
@@ -724,15 +738,25 @@ function fmtAge(epoch,nowEpoch,valid){
   return Math.floor(a/86400)+'d';
 }
 let lastChimeCount=-1, recentPeaks=[];
+// Store bins [scopeFrom, scopeFrom+scope.length); returns how many newer bins
+// the device still holds for us. Bins that aged out of the device's ring
+// before we asked become NaN gaps rather than keeping stale values.
+function ingestScope(s){
+  const arr=s.scope||[], from=s.scopeFrom, seq=s.scopeSeq;
+  if(newestSeq>=0&&seq-1<newestSeq){buf.fill(NaN);newestSeq=-1;}   // device rebooted
+  if(newestSeq>=0)
+    for(let b=newestSeq+1,end=Math.min(from,newestSeq+1+N);b<end;b++)buf[b%N]=NaN;
+  for(let i=0;i<arr.length;i++)buf[(from+i)%N]=arr[i];
+  const last=from+arr.length-1;
+  if(last>newestSeq){newestSeq=last;newestT=performance.now();}
+  return seq-1-newestSeq;
+}
 async function poll(){
+  let behind=0;
   try{
-    const s=await (await fetch('/api/state')).json();
-    const arr=s.scope||[], seq=s.scopeSeq||0;
-    let fresh=(newestSeq<0)?arr.length:(seq-1-newestSeq);
-    if(fresh<0)fresh=0; if(fresh>arr.length)fresh=arr.length;
-    for(let i=0;i<fresh;i++)
-      buf[(seq-fresh+i)%N]=arr[arr.length-fresh+i];
-    if(fresh>0){newestSeq=seq-1;newestT=performance.now();}
+    const s=await (await fetch('/api/state?since='+(newestSeq+1))).json();
+    behind=ingestScope(s);
+    threshold=s.threshold;
     document.getElementById('chimes').textContent=s.chimes;
     // Track true chime peaks so gain can be judged on real loudness.
     if(s.chimes!==lastChimeCount){
@@ -753,13 +777,16 @@ async function poll(){
       document.getElementById('clock').textContent='NTP syncing…';
     }
   }catch(e){}
-  setTimeout(poll,200);
+  setTimeout(poll,behind>0?0:200);   // after a stall, catch up immediately
 }
 
 // ---- load config, wire tuning controls ----
 const thr=document.getElementById('thr'),thrV=document.getElementById('thrV');
 const ref=document.getElementById('ref'),refV=document.getElementById('refV');
-thr.oninput=()=>{thrV.textContent=(+thr.value).toFixed(3);threshold=+thr.value;};
+// The solid plot line is the threshold the DEVICE is using (from /api/state);
+// dragging the slider only previews until Apply. Previously the line followed
+// the slider, so an unapplied value made logged chimes appear below it.
+thr.oninput=()=>{thrV.textContent=(+thr.value).toFixed(3);thrPreview=+thr.value;};
 ref.oninput=()=>{refV.textContent=ref.value+'ms';};
 fetch('/api/config').then(r=>r.json()).then(c=>{
   thr.value=c.threshold;thrV.textContent=(+c.threshold).toFixed(3);threshold=+c.threshold;
@@ -769,6 +796,7 @@ document.getElementById('apply').onclick=()=>{
   const body='threshold='+thr.value+'&refractoryMs='+ref.value;
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})
     .then(r=>r.json()).then(()=>{
+      threshold=+thr.value;thrPreview=null;
       const s=document.getElementById('saved');s.classList.add('show');
       setTimeout(()=>s.classList.remove('show'),1200);
     });

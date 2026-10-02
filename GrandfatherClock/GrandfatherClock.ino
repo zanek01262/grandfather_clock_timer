@@ -146,26 +146,43 @@ static void handleSave() {
 // ---- STA / dashboard routes -----------------------------------------
 static void handleState() {
   SoundState s = soundGetState();
-  float    sc[SCOPE_SEND_BINS];
-  uint32_t scopeSeq;
-  soundGetScope(sc, SCOPE_SEND_BINS, &scopeSeq);
+
+  // Scope bins stream incrementally: the page sends ?since=<first bin it
+  // still needs> and gets bins [scopeFrom, scopeFrom + scope.length). Sending
+  // a fixed "last N bins" dropped everything that aged out between polls.
+  uint32_t seq    = soundScopeSeq();
+  uint32_t oldest = (seq > SCOPE_RING) ? seq - SCOPE_RING : 0;
+  uint32_t from   = oldest;
+  if (server.hasArg("since")) {
+    uint32_t since = strtoul(server.arg("since").c_str(), nullptr, 10);
+    // since > seq means the device rebooted under an open page: resend all.
+    if (since > oldest && since <= seq) from = since;
+  } else if (seq - oldest > SCOPE_SEND_BINS) {
+    from = seq - SCOPE_SEND_BINS;   // cached pre-2.15.1 page: expects the newest bins
+  }
+  uint32_t to = from + SCOPE_SEND_BINS;
+  if (to > seq) to = seq;
 
   // Fixed buffer, no String concat: this runs 5x/sec for months on end,
   // and repeated String churn slowly fragments the ESP8266 heap.
-  char buf[640];
+  // Worst case ~230 header + 64 bins x 7 chars = ~680.
+  char buf[768];
   int off = snprintf(buf, sizeof(buf),
     "{\"level\":%.4f,\"ambient\":%.4f,\"peak\":%.4f,\"threshold\":%.4f,"
     "\"chimes\":%lu,\"lastChime\":%lu,\"lastPeak\":%.4f,\"timeValid\":%d,\"epoch\":%lu,"
-    "\"fw\":\"" FW_VERSION "\",\"scopeSeq\":%lu,\"scope\":[",
+    "\"fw\":\"" FW_VERSION "\",\"scopeFrom\":%lu,\"scopeSeq\":%lu,\"scope\":[",
     (double)s.level, (double)s.ambient, (double)s.peak,
     (double)settings.threshold,
     (unsigned long)s.chimeCount, (unsigned long)s.lastChimeEpoch,
     (double)s.lastChimePeak,
     timeIsValid() ? 1 : 0, (unsigned long)time(nullptr),
-    (unsigned long)scopeSeq);
-  for (int i = 0; i < SCOPE_SEND_BINS && off < (int)sizeof(buf) - 12; i++)
-    off += snprintf(buf + off, sizeof(buf) - off, "%s%.3f",
-                    i ? "," : "", (double)sc[i]);
+    (unsigned long)from, (unsigned long)seq);
+  // 4 decimals, same as the chime log, so a logged peak and its plotted bin
+  // agree (at %.3f a peak just over threshold could plot exactly on the line).
+  // A truncated array is safe: the page re-requests from where it stopped.
+  for (uint32_t b = from; b < to && off < (int)sizeof(buf) - 12; b++)
+    off += snprintf(buf + off, sizeof(buf) - off, "%s%.4f",
+                    b > from ? "," : "", (double)soundScopeAt(b));
   snprintf(buf + off, sizeof(buf) - off, "]}");
   server.send(200, "application/json", buf);
 }

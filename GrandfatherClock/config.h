@@ -38,8 +38,8 @@
 // MAJOR: breaking hardware/storage changes; MINOR: features; PATCH: fixes
 //   0.1.0 Rev010 MPU6050 | 0.2.0 Rev011 LM393/D1 Mini
 //   1.0.0 Rev012 FORIOT+SD | 1.0.1 review fixes
-//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug)
-#define FW_VERSION "2.15.0"
+//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold)
+#define FW_VERSION "2.15.1"
 
 // ---------- SoftAP provisioning ----------
 #define AP_SSID  "GrandfatherClock-Setup"
@@ -123,8 +123,14 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 
 // ---------- Scope trace streaming ----------
 #define SCOPE_BIN_MS     25    // fold 500Hz samples into 25ms peak bins
-#define SCOPE_RING       32    // bins kept firmware-side
-#define SCOPE_SEND_BINS  32    // bins per /api/state response (covers 800ms)
+// The page polls ~5x/s, but one slow response (WiFi modem-sleep, a TCP
+// retransmit, a flash write) easily takes over a second. The old 32-bin
+// (800ms) ring silently dropped every bin older than that, so a chime that
+// was detected and logged could be missing from the plot. The ring now holds
+// ~6.4s and the client asks for exactly the bins it lacks (?since=), so a
+// stall is caught up on the next poll instead of lost.
+#define SCOPE_RING       256   // bins kept firmware-side (~6.4s); power of 2
+#define SCOPE_SEND_BINS  64    // max bins per /api/state; client re-polls to catch up
 
 // --- Long-term history (device side) ---
 // The 25ms scope stream lives only in the browser and dies on refresh, so

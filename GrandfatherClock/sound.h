@@ -26,9 +26,11 @@ struct SoundState {
 typedef void (*ChimeCallback)(float peak, uint32_t onsetAgeMs);
 
 void       soundBegin(ChimeCallback cb);
-// Copy the most recent `n` scope bins (oldest-first) into `out`; writes the
-// sequence number of the newest bin to *seq. Bins are 25ms peak-holds.
-void       soundGetScope(float* out, uint8_t n, uint32_t* seq);
+// Scope bins: 25ms peak-holds of `excess`, numbered from boot. Bins
+// [seq - min(seq, SCOPE_RING), seq) are retained, where seq = soundScopeSeq()
+// is one past the newest bin.
+uint32_t   soundScopeSeq();
+float      soundScopeAt(uint32_t bin);   // caller keeps `bin` in the retained range
 
 // Coarse long-term history: one peak-excess value per second. Returns how
 // many entries are valid; `outSeq` receives the total seconds ever recorded

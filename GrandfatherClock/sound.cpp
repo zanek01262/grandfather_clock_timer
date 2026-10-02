@@ -65,10 +65,19 @@ static float    g_histMax   = 0.0f;
 static uint32_t g_histStart = 0;
 
 // --- scope bins: 25ms peak-holds of `excess`, ring-buffered ---
-static float    g_ring[SCOPE_RING] = {0};
+// Stored like g_hist (excess * HIST_SCALE as uint16): half the DRAM of floats.
+static uint16_t g_ring[SCOPE_RING] = {0};
 static uint32_t g_ringSeq   = 0;      // total bins ever written
 static float    g_binMax    = 0.0f;
 static uint32_t g_binStart  = 0;
+
+// excess (0..1) -> uint16 at HIST_SCALE resolution, rounded and clamped.
+static uint16_t toScaled(float v) {
+  v = v * (float)HIST_SCALE + 0.5f;
+  if (v < 0) v = 0;
+  if (v > 65535.0f) v = 65535.0f;
+  return (uint16_t)v;
+}
 
 void soundBegin(ChimeCallback cb) {
   g_cb = cb;
@@ -125,10 +134,7 @@ void soundUpdate() {
   if (excess > g_histMax) g_histMax = excess;
   uint32_t hms = millis();
   if ((uint32_t)(hms - g_histStart) >= 1000) {
-    float v = g_histMax * (float)HIST_SCALE;
-    if (v < 0) v = 0;
-    if (v > 65535.0f) v = 65535.0f;
-    g_hist[g_histSeq % HIST_SECONDS] = (uint16_t)v;
+    g_hist[g_histSeq % HIST_SECONDS] = toScaled(g_histMax);
     g_histSeq++;
     g_histMax = 0.0f;
     g_histStart = hms;
@@ -138,7 +144,7 @@ void soundUpdate() {
   if (excess > g_binMax) g_binMax = excess;
   uint32_t ms0 = millis();
   if ((uint32_t)(ms0 - g_binStart) >= (uint32_t)SCOPE_BIN_MS) {
-    g_ring[g_ringSeq % SCOPE_RING] = g_binMax;
+    g_ring[g_ringSeq % SCOPE_RING] = toScaled(g_binMax);
     g_ringSeq++;
     g_binMax   = 0.0f;
     g_binStart = ms0;
@@ -179,14 +185,9 @@ void soundUpdate() {
 
 SoundState soundGetState() { return g_state; }
 
-void soundGetScope(float* out, uint8_t n, uint32_t* seq) {
-  if (n > SCOPE_RING) n = SCOPE_RING;
-  *seq = g_ringSeq;
-  for (uint8_t i = 0; i < n; i++) {
-    // oldest-first: bin (seq - n + i)
-    uint32_t idx = g_ringSeq - n + i;
-    out[i] = (g_ringSeq >= n) ? g_ring[idx % SCOPE_RING] : 0.0f;
-  }
+uint32_t soundScopeSeq() { return g_ringSeq; }
+float soundScopeAt(uint32_t bin) {
+  return g_ring[bin % SCOPE_RING] / (float)HIST_SCALE;
 }
 
 void soundNoteChimeEpoch(uint32_t epoch) { g_state.lastChimeEpoch = epoch; }
