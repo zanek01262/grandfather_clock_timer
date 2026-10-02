@@ -369,11 +369,12 @@ static void handleGain() {
   } else {
     verdict = "good"; advice = "Signal sits nicely between the floor and the rails. Leave it here.";
   }
-  char buf[320];
+  char buf[360];
   snprintf(buf, sizeof(buf),
     "{\"rawMin\":%u,\"rawMax\":%u,\"swing\":%d,\"clip\":%u,"
-    "\"verdict\":\"%s\",\"advice\":\"%s\"}",
-    s.rawMin, s.rawMax, swing, s.clipCount, verdict, advice);
+    "\"verdict\":\"%s\",\"advice\":\"%s\",\"sps\":%u,\"gapMs\":%.1f}",
+    s.rawMin, s.rawMax, swing, s.clipCount, verdict, advice,
+    s.sampleRate, (double)s.maxGapUs / 1000.0);
   server.send(200, "application/json", buf);
 }
 
@@ -754,9 +755,10 @@ void loop() {
   // cause of unstable WiFi / dropped clients. We don't need it there.
   if (!apMode) soundUpdate();
 
-  // Periodic OLED refresh in STA mode (live level + last chime).
+  // Periodic OLED refresh in STA mode (live level + last chime). Each push
+  // blocks mic sampling, so keep it slow — see OLED_REFRESH_MS.
   static uint32_t lastUi = 0;
-  if (!apMode && millis() - lastUi > 100) {
+  if (!apMode && millis() - lastUi > OLED_REFRESH_MS) {
     lastUi = millis();
     SoundState s = soundGetState();
     HoroStatus hs = horoGetStatus();

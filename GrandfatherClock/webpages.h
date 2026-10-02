@@ -505,6 +505,10 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
             <span>last chime peak <b id="gPeak">\u2014</b></span>
             <span>recent <b id="gPeaks">\u2014</b></span>
           </div>
+          <div class="gnums" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)" data-help="tt:Mic sampling|How many times per second the microphone was actually read, and the longest stretch it went unread in the last second. Around 400&ndash;500/s with gaps near 25&ndash;30 ms (an OLED refresh) is normal. Much longer gaps are moments a strike could be timed late or a short sound missed.">
+            <span>samples/s <b id="gSps">&mdash;</b></span>
+            <span>longest gap <b id="gGap">&mdash;</b></span>
+          </div>
         </div>
       </div>
 
@@ -1257,6 +1261,8 @@ async function pollGain(){
     v.textContent=g.verdict.charAt(0).toUpperCase()+g.verdict.slice(1);
     v.className='gverdict '+g.verdict.replace(' ','').replace('too','too');
     document.getElementById('gAdvice').textContent=g.advice;
+    document.getElementById('gSps').textContent=g.sps;
+    document.getElementById('gGap').textContent=g.gapMs.toFixed(1)+' ms';
   }catch(e){}
   setTimeout(pollGain, 400);
 }

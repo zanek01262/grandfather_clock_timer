@@ -6,7 +6,7 @@
      A0 raw (0..1023)
        -> normalize to 0..1
        -> rectify around a running DC center (|x - center|)
-       -> envelope = fast EMA of the rectified signal
+       -> envelope = peak-hold of the rectified signal (instant attack)
        -> ambient  = slow EMA of the envelope (the "quiet floor")
        -> excess   = envelope - ambient
        -> if excess > threshold AND outside refractory window -> CHIME
@@ -25,7 +25,13 @@
 
 // --- EMA smoothing factors (per-sample) ---
 static const float A_CENTER  = 0.0008f;  // very slow: DC bias tracking
-static const float A_ENV     = 0.25f;    // fast: envelope follower
+// Envelope: instant attack, exponential release. AO is the raw waveform and
+// ~500 Hz is far below a chime's pitch, so each sample lands at a random
+// point in the cycle. The old EMA (alpha 0.25) averaged those and read only
+// 0.73-0.82 of the true amplitude (pitch-dependent), varying ~+/-9% between
+// identical strikes. Holding the recent maximum reads ~0.98 at any pitch with
+// ~+/-3% spread (simulated); the quiet floor rises only ~0.006 -> ~0.010.
+static const float ENV_RELEASE = 0.1f;   // per-sample, ~23 ms time constant
 // Ambient floor tracking is ASYMMETRIC and that is deliberate. A symmetric
 // EMA let a loud chime drag the "quiet floor" up with it, so for ~3.2s after
 // every strike `excess` clamped to zero and the live plot went dead — the
@@ -56,7 +62,12 @@ static uint16_t g_rawMaxAcc   = 0;
 static uint16_t g_clipAcc     = 0;
 static uint32_t g_rawWinStart = 0;
 
-static SoundState g_state = {0, 0, 0, 0, 0, 0, 1023, 0, 0};
+// sampling telemetry window accumulators
+static uint16_t g_sampleCntAcc = 0;
+static uint32_t g_gapMaxAccUs  = 0;
+static uint32_t g_rateWinStart = 0;
+
+static SoundState g_state = {0, 0, 0, 0, 0, 0, 1023, 0, 0, 0, 0};
 
 // --- coarse history: one peak per second, survives browser reloads ---
 // An entry closes every HIST_BINS scope bins rather than on its own millis()
@@ -99,11 +110,25 @@ void soundBegin(ChimeCallback cb) {
 void soundUpdate() {
   uint32_t now = micros();
   // Handle micros() wrap safely with unsigned subtraction.
-  if ((uint32_t)(now - g_lastSampleUs) < (uint32_t)SAMPLE_INTERVAL_US) return;
+  uint32_t gapUs = now - g_lastSampleUs;
+  if (gapUs < (uint32_t)SAMPLE_INTERVAL_US) return;
   g_lastSampleUs = now;
 
   int raw = analogRead(PIN_MIC_AO);
   float x = raw / 1023.0f;
+
+  // Sampling telemetry: reads actually achieved per second and the longest
+  // stretch without one. Anything that blocks loop() (OLED push, HTTP, flash
+  // write, tick capture) shows up here as a gap the detector was deaf for.
+  g_sampleCntAcc++;
+  if (gapUs > g_gapMaxAccUs) g_gapMaxAccUs = gapUs;
+  uint32_t rms = millis();
+  if ((uint32_t)(rms - g_rateWinStart) >= 1000) {
+    g_state.sampleRate = (uint16_t)((uint32_t)g_sampleCntAcc * 1000UL / (rms - g_rateWinStart));
+    g_state.maxGapUs   = g_gapMaxAccUs;
+    g_sampleCntAcc = 0; g_gapMaxAccUs = 0;
+    g_rateWinStart = rms;
+  }
 
   // Gain-calibration telemetry in the RAW ADC domain. Track the min/max
   // swing over a ~500ms rolling window and count near-rail (clipping)
@@ -123,8 +148,9 @@ void soundUpdate() {
   g_center += A_CENTER * (x - g_center);
   float rect = fabsf(x - g_center);
 
-  // Envelope follower (fast), ambient floor (slow).
-  g_env     += A_ENV     * (rect  - g_env);
+  // Envelope follower (peak-hold), ambient floor (slow).
+  if (rect > g_env) g_env = rect;
+  else              g_env += ENV_RELEASE * (rect - g_env);
   g_ambient += ((g_env > g_ambient) ? A_AMB_UP : A_AMB_DOWN) * (g_env - g_ambient);
 
   float excess = g_env - g_ambient;

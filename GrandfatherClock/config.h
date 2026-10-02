@@ -38,8 +38,8 @@
 // MAJOR: breaking hardware/storage changes; MINOR: features; PATCH: fixes
 //   0.1.0 Rev010 MPU6050 | 0.2.0 Rev011 LM393/D1 Mini
 //   1.0.0 Rev012 FORIOT+SD | 1.0.1 review fixes
-//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold) | 2.15.2 live-plot gaps backfilled from bin-aligned history
-#define FW_VERSION "2.15.2"
+//   2.0.0 SD->LittleFS | 2.1.0 mDNS+OTA+pass-2 fixes | 2.1.1 OLED pins swapped | 2.1.2 AP stability fixes | 2.2.0 scope streaming | 2.3.0 Y scale + 30s window | 2.4.0 scope polish | 2.5.0 chime learning + horology | 2.5.1 f2 gate fix | 2.6.0 env/half-hour/alarm/wind | 2.7.0 tick analysis + timegrapher | 2.7.1 UI redesign | 2.7.2 wrap-safe tick sampling | 2.8.0 help mode + mic gain tool | 2.8.1 review fixes | 2.9.0 Brass & Walnut theme | 2.10.0 feedback round | 2.10.1 chime-log download fix + logstat | 2.10.2 CSV date/time split | 2.11.0 gettimeofday timing fix + sec_from_hour columns | 2.11.1 log-scale default | 2.12.0 xlsx export | 2.13.0 1-hour history | 2.14.0 chime peak fix | 2.14.1 DRAM saving | 2.15.0 browser OTA at /update (bypasses the IDE espota/mDNS bug) | 2.15.1 scope dropout fix (since-based scope streaming, plot shows device threshold) | 2.15.2 live-plot gaps backfilled from bin-aligned history | 2.16.0 sampling telemetry, OLED at 2 Hz, peak-hold envelope (peaks read ~20-35% higher: re-check threshold)
+#define FW_VERSION "2.16.0"
 
 // ---------- SoftAP provisioning ----------
 #define AP_SSID  "GrandfatherClock-Setup"
@@ -120,6 +120,13 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 // strikes would invalidate the hourly drift measurement.
 #define TICK_STRIKE_GUARD_S      90L
 #define SAMPLE_INTERVAL_US 2000   // ~500 Hz
+
+// OLED refresh period. A full-frame I2C push is 1 KB (~23 ms at 400 kHz) and
+// blocks loop(), so the mic is not sampled meanwhile. At the old 100 ms that
+// was ~25% of all time — enough to blur or miss short sounds and to time a
+// strike onset up to ~25 ms late. 500 ms cuts it to ~5%; the 700 ms CHIME
+// banner still shows. The gain panel's "longest gap" reports the real cost.
+#define OLED_REFRESH_MS  500
 
 // ---------- Scope trace streaming ----------
 #define SCOPE_BIN_MS     25    // fold 500Hz samples into 25ms peak bins

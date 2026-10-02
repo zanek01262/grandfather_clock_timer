@@ -17,6 +17,9 @@ struct SoundState {
   uint16_t rawMin;         // min raw ADC seen in the recent window (0..1023)
   uint16_t rawMax;         // max raw ADC seen in the recent window
   uint16_t clipCount;      // samples at/near the rails in the window
+  // --- sampling telemetry (1 s window) ---
+  uint16_t sampleRate;     // A0 reads per second actually achieved
+  uint32_t maxGapUs;       // longest stretch between reads (OLED push, HTTP, flash...)
 };
 
 // Fired once per confirmed chime, AFTER its peak window closes, so `peak`

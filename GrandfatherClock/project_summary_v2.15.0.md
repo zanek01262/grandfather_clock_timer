@@ -147,8 +147,11 @@ sensitivity model. Web dashboard + OLED, provisioned over a SoftAP splash.
 `sound.h/.cpp`, `display.h/.cpp`, `webpages.h`, `analysis.h/.cpp`, `horology.h/.cpp`
 
 - **sound**: 500 Hz A0 sampling (STA mode only — ADC suppressed in AP mode,
-  it destabilizes WiFi); self-zeroing DC center; fast envelope vs slow ambient
-  EMA; excess = envelope−ambient; threshold + refractory trigger. Two-stage
+  it destabilizes WiFi); self-zeroing DC center; peak-hold envelope (instant
+  attack, ~23 ms release — AO is the raw waveform, sampled far below chime
+  pitch) vs slow asymmetric ambient EMA; excess = envelope−ambient; threshold +
+  refractory trigger. Samples/s and longest unsampled gap are reported on
+  `/api/gain`; OLED refreshes at 2 Hz because each push blocks sampling. Two-stage
   detection: envelope proposes, Goertzel tone gate confirms (if enabled).
   Also folds excess into 25ms peak bins (ring of 256, ~6.4s) for scope streaming.
   Every 40 bins (exactly 1 s; fixed bin cadence) make one 1-hour-history entry, so
