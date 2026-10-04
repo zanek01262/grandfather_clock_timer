@@ -29,15 +29,6 @@ static bool g_ok = false;
 static uint32_t g_flashUntil = 0;
 static float    g_flashPeak  = 0;
 
-// Ancillary live-screen state (Phase A/B), pushed from the main loop.
-static bool  g_stopped   = false;
-static bool  g_windDue   = false;
-static bool  g_envOk     = false;
-static float g_tempC     = 0;
-void displaySetAlerts(bool stopped, bool windDue, bool envPresent, float tempC) {
-  g_stopped = stopped; g_windDue = windDue; g_envOk = envPresent; g_tempC = tempC;
-}
-
 void displayBegin() {
   // Some integrated boards gate the OLED behind a reset line on GPIO16;
   // pulse it first (harmless if not wired). D0 is otherwise unused.
@@ -129,18 +120,6 @@ void displayLive(const SoundState& s, float threshold, bool timeValid) {
     return;
   }
 
-  // Stopped-clock takes over the screen — it's the most important alert.
-  if (g_stopped) {
-    oled.clearDisplay();
-    oled.setTextSize(2);
-    oled.setCursor(10, 10); oled.println(F("CLOCK"));
-    oled.setCursor(6, 30);  oled.println(F("STOPPED"));
-    oled.setTextSize(1);
-    oled.setCursor(0, 52);  oled.print(F("no strike heard"));
-    oled.display();
-    return;
-  }
-
   oled.clearDisplay();
   oled.setTextSize(1);
   oled.setTextColor(SSD1306_WHITE);
@@ -178,11 +157,6 @@ void displayLive(const SoundState& s, float threshold, bool timeValid) {
   oled.setCursor(0, 36);
   oled.print(F("ambient "));
   oled.print(s.ambient, 3);
-  if (g_envOk) {
-    oled.setCursor(92, 36);
-    oled.print(g_tempC, 1); oled.print((char)247); oled.print('C');  // 247 = degree
-  }
-  if (g_windDue) { oled.setCursor(92, 0); oled.print(F("WIND")); }
 
   // Last chime age.
   oled.setCursor(0, 48);
