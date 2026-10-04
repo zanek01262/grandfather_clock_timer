@@ -236,6 +236,10 @@ static void handleConfigSet() {
     settings.refractoryMs = (uint32_t)server.arg("refractoryMs").toInt();
   if (server.hasArg("toneEnabled"))
     settings.toneEnabled = (uint8_t)server.arg("toneEnabled").toInt();
+  // The dashboard's Tick analysis switch posts this; it was never handled,
+  // so the switch snapped back to Off and tick analysis could not be enabled.
+  if (server.hasArg("tickEnabled"))
+    settings.tickEnabled = server.arg("tickEnabled").toInt() ? 1 : 0;
   if (server.hasArg("toneRatio"))
     settings.toneRatio = server.arg("toneRatio").toFloat();
   if (server.hasArg("halfHour")) {

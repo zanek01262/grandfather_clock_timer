@@ -653,7 +653,10 @@ function drawScope(){
       const lo=Math.max(0,newestSeq-winBins+1);
       for(let b=lo;b<=newestSeq;b++){const v=buf[b%N]; if(v>m)m=v;}
     }
-    target=Math.max(0.02,Math.min(0.6,m*1.25));
+    // Keep the threshold line(s) in view. Scaled to quiet-room noise alone,
+    // the noise filled the whole plot (a flat "line" with dips to the bottom)
+    // and the threshold sat off the top, so it wasn't clear nothing crossed it.
+    target=Math.max(0.02,threshold*1.25,(thrPreview||0)*1.25,Math.min(0.6,m*1.25));
   }else target=+yMode;
   yMax+=(target-yMax)*0.08;
 

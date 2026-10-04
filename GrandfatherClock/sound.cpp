@@ -6,7 +6,7 @@
      A0 raw (0..1023)
        -> normalize to 0..1
        -> rectify around a running DC center (|x - center|)
-       -> envelope = peak-hold of the rectified signal (instant attack)
+       -> envelope = fast EMA of the rectified signal
        -> ambient  = slow EMA of the envelope (the "quiet floor")
        -> excess   = envelope - ambient
        -> if excess > threshold AND outside refractory window -> CHIME
@@ -25,13 +25,11 @@
 
 // --- EMA smoothing factors (per-sample) ---
 static const float A_CENTER  = 0.0008f;  // very slow: DC bias tracking
-// Envelope: instant attack, exponential release. AO is the raw waveform and
-// ~500 Hz is far below a chime's pitch, so each sample lands at a random
-// point in the cycle. The old EMA (alpha 0.25) averaged those and read only
-// 0.73-0.82 of the true amplitude (pitch-dependent), varying ~+/-9% between
-// identical strikes. Holding the recent maximum reads ~0.98 at any pitch with
-// ~+/-3% spread (simulated); the quiet floor rises only ~0.006 -> ~0.010.
-static const float ENV_RELEASE = 0.1f;   // per-sample, ~23 ms time constant
+// Fast envelope follower. (2.16.0 tried a peak-hold envelope instead: in
+// simulation it gave steadier chime peaks, but on the real device chimes
+// stopped registering and the quiet trace changed character, so 2.16.2
+// went back to this proven EMA. Re-test on hardware before trying again.)
+static const float A_ENV     = 0.25f;
 // Ambient floor tracking is ASYMMETRIC and that is deliberate. A symmetric
 // EMA let a loud chime drag the "quiet floor" up with it, so for ~3.2s after
 // every strike `excess` clamped to zero and the live plot went dead — the
@@ -157,9 +155,8 @@ static void sampleIfDue() {
   g_center += A_CENTER * (x - g_center);
   float rect = fabsf(x - g_center);
 
-  // Envelope follower (peak-hold), ambient floor (slow).
-  if (rect > g_env) g_env = rect;
-  else              g_env += ENV_RELEASE * (rect - g_env);
+  // Envelope follower (fast), ambient floor (slow).
+  g_env     += A_ENV     * (rect  - g_env);
   g_ambient += ((g_env > g_ambient) ? A_AMB_UP : A_AMB_DOWN) * (g_env - g_ambient);
 
   float excess = g_env - g_ambient;
