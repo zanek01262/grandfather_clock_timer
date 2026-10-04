@@ -31,10 +31,6 @@ static void applyDefaults() {
   settings.toneF1        = 0;
   settings.toneF2        = 0;
   settings.toneRatio     = DEF_TONE_RATIO;
-  settings.halfHourStrike = 0;
-  settings.windDays       = DEF_WIND_DAYS;
-  settings.tickEnabled    = 0;
-  settings.tickNominal    = 0;
 }
 
 // ---- tiny extractors -------------------------------------------------
@@ -120,10 +116,6 @@ void loadSettings() {
   if (findValue(src, "toneF1", v))       settings.toneF1        = v.toFloat();
   if (findValue(src, "toneF2", v))       settings.toneF2        = v.toFloat();
   if (findValue(src, "toneRatio", v))    settings.toneRatio     = v.toFloat();
-  if (findValue(src, "halfHour", v))     settings.halfHourStrike = (uint8_t)v.toInt();
-  if (findValue(src, "windDays", v))     settings.windDays      = (uint16_t)v.toInt();
-  if (findValue(src, "tickEnabled", v))  settings.tickEnabled   = (uint8_t)v.toInt();
-  if (findValue(src, "tickNominal", v))  settings.tickNominal   = v.toFloat();
 }
 
 bool saveSettings() {
@@ -143,11 +135,7 @@ bool saveSettings() {
   f.print(F("  \"toneEnabled\":"));    f.print(settings.toneEnabled);          f.print(F(",\n"));
   f.print(F("  \"toneF1\":"));         f.print(settings.toneF1, 1);            f.print(F(",\n"));
   f.print(F("  \"toneF2\":"));         f.print(settings.toneF2, 1);            f.print(F(",\n"));
-  f.print(F("  \"toneRatio\":"));      f.print(settings.toneRatio, 3);         f.print(F(",\n"));
-  f.print(F("  \"halfHour\":"));       f.print(settings.halfHourStrike);       f.print(F(",\n"));
-  f.print(F("  \"windDays\":"));       f.print(settings.windDays);             f.print(F(",\n"));
-  f.print(F("  \"tickEnabled\":"));    f.print(settings.tickEnabled);          f.print(F(",\n"));
-  f.print(F("  \"tickNominal\":"));    f.print(settings.tickNominal, 4);       f.print(F("\n"));
+  f.print(F("  \"toneRatio\":"));      f.print(settings.toneRatio, 3);         f.print(F("\n"));
   f.print(F("}\n"));
   f.close();
   return true;

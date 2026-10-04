@@ -36,9 +36,6 @@
 #include "storage.h"
 #include "webpages.h"
 #include "analysis.h"
-#include "horology.h"
-#include "environment.h"
-#include "ticks.h"
 
 ESP8266WebServer server(80);
 // Browser OTA. ArduinoOTA (IDE network port) is kept, but the IDE 2.x has a
@@ -63,9 +60,8 @@ static bool timeSynced = false;
 
 static void startNTP() {
   // POSIX TZ rule, so daylight saving switches by itself. The old
-  // configTime(offset, 0, ...) form has no DST rules: during PDT local time
-  // ran an hour behind, the expected strike count was one short, and every
-  // hourly measurement was marked invalid.
+  // configTime(offset, 0, ...) form has no DST rules: during PDT the chime
+  // log's local times ran an hour behind.
   configTime(settings.tz.c_str(), "pool.ntp.org", "time.nist.gov");
 }
 
@@ -86,22 +82,6 @@ unsigned long long epochMillis() {
 
 bool timeIsValid() {
   return (unsigned long)time(nullptr) >= NTP_MIN_EPOCH;
-}
-
-// True when a blocking A0 capture (tick measurement or listening) would
-// deafen the strike detector at a bad moment: a strike sequence is open, or
-// :00 (and :30 in half-hour mode) is within TICK_STRIKE_GUARD_S.
-static bool strikeRiskNow() {
-  if (horoEventOpen()) return true;
-  if (!timeIsValid()) return false;
-  long secsIntoHour = (long)(time(nullptr) % 3600);
-  long toHour = (secsIntoHour <= 1800) ? secsIntoHour : 3600 - secsIntoHour;
-  if (toHour < TICK_STRIKE_GUARD_S) return true;             // near :00
-  if (settings.halfHourStrike) {
-    long d = secsIntoHour - 1800;
-    if ((d < 0 ? -d : d) < TICK_STRIKE_GUARD_S) return true; // near :30
-  }
-  return false;
 }
 
 // =====================================================================
@@ -236,21 +216,8 @@ static void handleConfigSet() {
     settings.refractoryMs = (uint32_t)server.arg("refractoryMs").toInt();
   if (server.hasArg("toneEnabled"))
     settings.toneEnabled = (uint8_t)server.arg("toneEnabled").toInt();
-  // The dashboard's Tick analysis switch posts this; it was never handled,
-  // so the switch snapped back to Off and tick analysis could not be enabled.
-  if (server.hasArg("tickEnabled"))
-    settings.tickEnabled = server.arg("tickEnabled").toInt() ? 1 : 0;
   if (server.hasArg("toneRatio"))
     settings.toneRatio = server.arg("toneRatio").toFloat();
-  if (server.hasArg("halfHour")) {
-    settings.halfHourStrike = (uint8_t)server.arg("halfHour").toInt();
-    horoSetHalfHour(settings.halfHourStrike);
-  }
-  if (server.hasArg("windDays")) {
-    settings.windDays = (uint16_t)server.arg("windDays").toInt();
-    horoSetWindDays(settings.windDays);
-  ticksSetNominal(settings.tickNominal);
-  }
   if (server.hasArg("tz")) {
     settings.tz = server.arg("tz");
     startNTP();
@@ -329,71 +296,6 @@ static void handleLearnStatus() {
   server.send(200, "application/json", b);
 }
 
-static void handleAdjust() {
-  if (!server.hasArg("turns")) { server.send(400, "text/plain", "missing turns"); return; }
-  float t = server.arg("turns").toFloat();
-  if (t == 0) { server.send(400, "text/plain", "turns must be nonzero"); return; }
-  horoLogAdjustment(t);
-  server.send(200, "application/json", "{\"ok\":true}");
-}
-
-static void handleHorology() {
-  HoroStatus h = horoGetStatus();
-  char b[576];
-  snprintf(b, sizeof(b),
-    "{\"lastEpoch\":%lu,\"lastCount\":%u,\"lastExpected\":%u,"
-    "\"lastOffset\":%.2f,\"lastValid\":%d,"
-    "\"rate\":%.3f,\"rateValid\":%d,\"nMeas\":%u,"
-    "\"k\":%.3f,\"kValid\":%d,\"predTurns\":%.3f,\"predValid\":%d,"
-    "\"lastAdjEpoch\":%lu,\"lastAdjTurns\":%.2f,\"toneF1\":%.1f}",
-    (unsigned long)h.lastEpoch, h.lastCount, h.lastExpected,
-    (double)h.lastOffset, h.lastValid ? 1 : 0,
-    (double)h.rate, h.rateValid ? 1 : 0, h.nMeas,
-    (double)h.k, h.kValid ? 1 : 0, (double)h.predTurns, h.predValid ? 1 : 0,
-    (unsigned long)h.lastAdjEpoch, (double)h.lastAdjTurns,
-    (double)settings.toneF1);
-  server.send(200, "application/json", b);
-}
-
-static void handleTickStatus() {
-  BeatResult b = ticksGetLast();
-  char buf[256];
-  snprintf(buf, sizeof(buf),
-    "{\"enabled\":%d,\"valid\":%d,\"beatPeriod\":%.4f,\"rate\":%.2f,"
-    "\"beatErrorMs\":%.2f,\"nOnsets\":%u,\"amplitude\":%.3f,\"nominal\":%.4f}",
-    settings.tickEnabled, b.valid ? 1 : 0, (double)b.beatPeriod,
-    (double)b.rateSecPerDay, (double)b.beatErrorMs, b.nOnsets,
-    (double)b.amplitudeRel, (double)ticksGetNominal());
-  server.send(200, "application/json", buf);
-}
-
-static void handleTickArm() {
-  ticksArm();
-  server.send(200, "application/json", "{\"ok\":true}");
-}
-
-static void handleTickCal() {
-  // Set current measured beat as the nominal target (calibration).
-  BeatResult b = ticksGetLast();
-  if (b.valid) {
-    settings.tickNominal = b.beatPeriod;
-    ticksSetNominal(b.beatPeriod);
-    saveSettings();
-    server.send(200, "application/json", "{\"ok\":true}");
-  } else server.send(400, "application/json", "{\"ok\":false,\"err\":\"no valid capture\"}");
-}
-
-static void handleTickLog() {
-  if (!storageReady()) { server.send(503, "text/plain", "no fs"); return; }
-  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "text/csv", "epoch,beat,rate,beatErrorMs,amplitude\n");
-  File f = LittleFS.open(TICK_LOG_PATH, "r");
-  if (f) { uint8_t bb[256]; int n;
-    while ((n=f.read(bb,sizeof(bb)))>0){ server.sendContent((const char*)bb,n); yield(); soundSampleOnly(); }
-    f.close(); }
-  server.sendContent("");
-}
-
 static void handleGain() {
   SoundState s = soundGetState();
   // Before the first 500ms window closes, rawMin/rawMax still hold their
@@ -420,44 +322,6 @@ static void handleGain() {
     s.rawMin, s.rawMax, swing, s.clipCount, verdict, advice,
     s.sampleRate, (double)s.maxGapUs / 1000.0);
   server.send(200, "application/json", buf);
-}
-
-static void handleTickListen() {
-  // Listening blocks the chime detector for the whole window (up to 20 s),
-  // so refuse it where a strike could be missed — same guard as the
-  // scheduled tick captures.
-  if (strikeRiskNow()) {
-    server.send(409, "application/json",
-      "{\"busy\":1,\"advice\":\"Too close to the hour, or a strike is in progress. "
-      "Listening would deafen the chime detector - try again in a couple of minutes.\"}");
-    return;
-  }
-  float win = server.hasArg("s") ? server.arg("s").toFloat() : 6.0f;
-  TickDiag d = ticksDiagnose(win);
-  static const char* V[] = {"silent","faint","good","noisy"};
-  static const char* A[] = {
-    "No onsets at all. Turn the LM393 pot UP (clockwise) a little, or move the mic closer to the movement.",
-    "Only a few onsets - the escapement is on the edge of audibility. Turn the pot UP slightly, or reduce room noise.",
-    "Ticks are being heard clearly and regularly. Leave the pot here.",
-    "Too many irregular onsets - the mic is picking up room noise, not just the escapement. Turn the pot DOWN a little."
-  };
-  char buf[400];
-  snprintf(buf, sizeof(buf),
-    "{\"onsets\":%u,\"windowS\":%.1f,\"medianIntvl\":%.3f,\"meanAmp\":%.4f,"
-    "\"floor\":%.4f,\"regularity\":%.2f,\"verdict\":\"%s\",\"advice\":\"%s\","
-    "\"bph\":%.0f}",
-    d.nOnsets, (double)d.windowS, (double)d.medianIntvl, (double)d.meanAmp,
-    (double)d.floorLvl, (double)d.regularity, V[d.verdict], A[d.verdict],
-    d.medianIntvl > 0.05f ? (double)(3600.0f / d.medianIntvl) : 0.0);
-  server.send(200, "application/json", buf);
-}
-
-static void handleDriftDelete() {
-  if (!server.hasArg("epoch")) { server.send(400, "text/plain", "missing epoch"); return; }
-  uint32_t e = (uint32_t)strtoul(server.arg("epoch").c_str(), nullptr, 10);
-  bool ok = horoDeleteMeasurement(e);
-  server.send(ok ? 200 : 404, "application/json",
-              ok ? "{\"ok\":true}" : "{\"ok\":false,\"err\":\"not found\"}");
 }
 
 static void handleHistory() {
@@ -511,12 +375,10 @@ static void handleLogStat() {
   // real causes are: filesystem not mounted (Flash Size set to FS:none),
   // NTP not yet synced (strikes can't be timestamped so they aren't logged),
   // or simply nothing detected yet.
-  size_t chimeBytes = 0, driftBytes = 0;
+  size_t chimeBytes = 0;
   if (storageReady()) {
     File f = LittleFS.open(CHIME_LOG_PATH, "r");
     if (f) { chimeBytes = f.size(); f.close(); }
-    f = LittleFS.open(DRIFT_LOG_PATH, "r");
-    if (f) { driftBytes = f.size(); f.close(); }
   }
   SoundState s = soundGetState();
   const char* why = "ok";
@@ -527,61 +389,11 @@ static void handleLogStat() {
   else if (chimeBytes == 0)       why = "chimes detected since boot but none written - they occurred before NTP synced";
   char buf[300];
   snprintf(buf, sizeof(buf),
-    "{\"fs\":%d,\"timeValid\":%d,\"chimeBytes\":%u,\"driftBytes\":%u,"
+    "{\"fs\":%d,\"timeValid\":%d,\"chimeBytes\":%u,"
     "\"chimesSinceBoot\":%lu,\"why\":\"%s\"}",
     storageReady() ? 1 : 0, timeIsValid() ? 1 : 0,
-    (unsigned)chimeBytes, (unsigned)driftBytes,
-    (unsigned long)s.chimeCount, why);
+    (unsigned)chimeBytes, (unsigned long)s.chimeCount, why);
   server.send(200, "application/json", buf);
-}
-
-static void handleWind() {
-  horoLogWind();
-  server.send(200, "application/json", "{\"ok\":true}");
-}
-
-static void handleEnv() {
-  EnvState e = environmentGet();
-  char b[160];
-  snprintf(b, sizeof(b),
-    "{\"present\":%d,\"tempC\":%.2f,\"humidity\":%.1f,\"pressureHpa\":%.1f}",
-    e.present ? 1 : 0, (double)e.tempC, (double)e.humidity, (double)e.pressureHpa);
-  server.send(200, "application/json", b);
-}
-
-static void handleDrift() {
-  if (!storageReady()) { server.send(503, "text/plain", "no fs"); return; }
-  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server.send(200, "text/csv",
-    "date,time,epoch,strikes,expected,sec_from_hour,offset_mmss,valid,tempC,half_hour\n");
-  File f = LittleFS.open(DRIFT_LOG_PATH, "r");
-  if (f) {
-    while (f.available()) {
-      String ln = f.readStringUntil('\n');
-      if (ln.length() < 3) continue;
-      unsigned long e=0; unsigned c=0,x=0,v=0,hh=0,msv=0; float o=0, tc=-100;
-      int got = sscanf(ln.c_str(), "%lu,%u,%u,%f,%u,%f,%u,%u",
-                       &e,&c,&x,&o,&v,&tc,&hh,&msv);
-      if (got < 5) continue;
-      char d[12], t[14];
-      formatLocalParts((uint64_t)e * 1000ULL + (uint64_t)msv, d, sizeof(d), t, sizeof(t));
-      // offset o is already the signed seconds from the top of the hour;
-      // also render it as +/-mm:ss so it is readable at a glance.
-      long ao = (long)(o < 0 ? -o : o);
-      char mmss[16];
-      snprintf(mmss, sizeof(mmss), "%c%ld:%02ld",
-               (o < 0 ? '-' : '+'), ao / 60, ao % 60);
-      char row[190];
-      int n = snprintf(row, sizeof(row), "%s,%s,%lu,%u,%u,%+.3f,%s,%u,%.2f,%u\n",
-                       d, t, e, c, x, (double)o, mmss, v,
-                       (double)((got>=6)?tc:-100.0f), (got>=7)?hh:0);
-      server.sendContent(row, n);
-      yield();
-      soundSampleOnly();               // keep listening while streaming
-    }
-    f.close();
-  }
-  server.sendContent("");
 }
 
 static void handleReset() {
@@ -691,20 +503,9 @@ static bool startSTAMode() {
   server.on("/api/log",    handleLog);
   server.on("/api/learn/start",  HTTP_POST, handleLearnStart);
   server.on("/api/learn/status", handleLearnStatus);
-  server.on("/api/adjust",       HTTP_POST, handleAdjust);
-  server.on("/api/horology",     handleHorology);
-  server.on("/api/wind",         HTTP_POST, handleWind);
-  server.on("/api/env",          handleEnv);
   server.on("/api/gain",         handleGain);
-  server.on("/api/tick",         handleTickStatus);
-  server.on("/api/tick/arm",     HTTP_POST, handleTickArm);
-  server.on("/api/tick/calibrate", HTTP_POST, handleTickCal);
-  server.on("/api/tick/log",     handleTickLog);
-  server.on("/api/tick/listen",  HTTP_POST, handleTickListen);
-  server.on("/api/drift/delete", HTTP_POST, handleDriftDelete);
   server.on("/api/logstat",      handleLogStat);
   server.on("/api/history",      handleHistory);
-  server.on("/api/drift",        handleDrift);
   server.on("/api/reset",  handleReset);
   server.onNotFound(handleNotFound);
   server.begin();
@@ -739,13 +540,12 @@ static bool startSTAMode() {
 // =====================================================================
 static void onChime(float peak, uint32_t onsetAgeMs) {
   // The callback arrives CHIME_PEAK_WINDOW_MS after the strike began; wind
-  // the timestamp back so horology still sees the true onset instant.
+  // the timestamp back so the log records the true onset instant.
   unsigned long long now = epochMillis();
   unsigned long long ms  = (now > onsetAgeMs) ? (now - onsetAgeMs) : now;
   unsigned long epoch   = (unsigned long)(ms / 1000ULL);
   soundNoteChimeEpoch(epoch);
   if (epoch >= NTP_MIN_EPOCH) logChime(ms, peak);   // full ms precision
-  horoOnChime(ms);                        // strike stream -> hour analysis
   displayChimeFlash(peak);
 }
 
@@ -766,11 +566,6 @@ void setup() {
   storageBegin();           // LittleFS; tolerates failure (log disabled)
   loadSettings();           // pulls creds + tuning from config.json
   soundBegin(onChime);      // sets up A0 sampling + envelope detection
-  horoBegin();              // reload drift/adjustment logs from flash
-  environmentBegin();       // BME280 on the shared I2C bus (optional)
-  horoSetHalfHour(settings.halfHourStrike);
-  horoSetWindDays(settings.windDays);
-  ticksSetNominal(settings.tickNominal);
 
   if (settings.wifiSsid.length() == 0) {
     Serial.println(F("[GFC] no creds -> AP provisioning"));
@@ -794,35 +589,6 @@ void loop() {
   } else {
     MDNS.update();
     ArduinoOTA.handle();
-    horoUpdate();           // closes strike events on gap timeout
-    environmentUpdate();    // slow BME280 poll (self-paced)
-    if (environmentPresent()) horoSetTemperature(environmentGet().tempC);
-
-    // Phase E: periodic escapement tick capture (only when enabled). A
-    // capture blocks ~TICK_WINDOW_S with yield(); we space them out so the
-    // dashboard/detection stay responsive between measurements.
-    // A capture blocks the loop for TICK_WINDOW_S, during which soundUpdate()
-    // does not run and strikes are NOT heard. Colliding with a strike train
-    // would drop strikes and invalidate that hour's measurement, so defer
-    // whenever a sequence is open or one is imminent. Hour-strike accuracy
-    // is the primary mission; tick sampling yields to it.
-    static uint32_t lastTick = 0;
-    if (settings.tickEnabled && !strikeRiskNow() &&
-        (millis() - lastTick > TICK_CAPTURE_INTERVAL_MS || ticksArmed())) {
-      lastTick = millis();
-      ticksCapture();
-      BeatResult br = ticksGetLast();
-      if (br.valid && storageReady() && timeIsValid()) {
-        File f = LittleFS.open(TICK_LOG_PATH, "a");
-        if (f) {
-          f.printf("%lu,%.4f,%.2f,%.2f,%.3f\n", (unsigned long)time(nullptr),
-                   br.beatPeriod, br.rateSecPerDay, br.beatErrorMs, br.amplitudeRel);
-          size_t sz = f.size(); f.close();
-          if (sz > TICK_LOG_MAX_BYTES) { LittleFS.remove(TICK_LOG_PATH ".old");
-            LittleFS.rename(TICK_LOG_PATH, TICK_LOG_PATH ".old"); }
-        }   // open failed: nothing to close, just skip this sample
-      }
-    }
   }
   server.handleClient();
 
@@ -838,11 +604,7 @@ void loop() {
   static uint32_t lastUi = 0;
   if (!apMode && millis() - lastUi > OLED_REFRESH_MS) {
     lastUi = millis();
-    SoundState s = soundGetState();
-    HoroStatus hs = horoGetStatus();
-    EnvState   es = environmentGet();
-    displaySetAlerts(hs.stopped, hs.windDue, es.present, es.tempC);
-    displayLive(s, settings.threshold, timeIsValid());
+    displayLive(soundGetState(), settings.threshold, timeIsValid());
   }
 
   yield();

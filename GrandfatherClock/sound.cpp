@@ -126,7 +126,7 @@ static void sampleIfDue() {
 
   // Sampling telemetry: reads actually achieved per second and the longest
   // stretch without one. Anything that blocks loop() (OLED push, HTTP, flash
-  // write, tick capture) shows up here as a gap the detector was deaf for.
+  // write) shows up here as a gap the detector was deaf for.
   g_sampleCntAcc++;
   if (gapUs > g_gapMaxAccUs) g_gapMaxAccUs = gapUs;
   uint32_t rms = millis();

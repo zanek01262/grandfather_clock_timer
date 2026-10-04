@@ -14,7 +14,5 @@ void displayConnecting(const String& ssid);
 void displayConnected(const String& ip);
 void displayLive(const SoundState& s, float threshold, bool timeValid);
 void displayChimeFlash(float peak);                     // brief chime banner
-// Push ancillary state shown on the live screen (Phase A/B).
-void displaySetAlerts(bool stopped, bool windDue, bool envPresent, float tempC);
 
 #endif // DISPLAY_H

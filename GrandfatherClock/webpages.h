@@ -87,7 +87,7 @@ static const char SETUP_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><
     <div class="sub">Connect your device to Wi-Fi</div>
 
     <label>Network <button class="ghost" id="rescan" type="button">Rescan</button></label>
-    <div class="net" id="nets"><button type="button" disabled>Scanning\u2026</button></div>
+    <div class="net" id="nets"><button type="button" disabled>Scanning&hellip;</button></div>
 
     <label>Password</label>
     <input type="password" id="pass" placeholder="Wi-Fi password" autocomplete="off">
@@ -192,7 +192,7 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
     box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
   .panel h2{font-family:var(--display);font-weight:700;font-size:15px;
     letter-spacing:.10em;text-transform:uppercase;color:var(--accent)}
-  .stat .v,.hv,.gverdict{font-family:var(--display);font-weight:700}
+  .stat .v,.gverdict{font-family:var(--display);font-weight:700}
   .stat .v{font-size:29px}
   .scope{background:#120c08;border-color:var(--line)}
   .topbar{background:linear-gradient(90deg,var(--accent),rgba(201,162,39,.15) 55%,transparent)}
@@ -227,14 +227,6 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
     color:var(--dim); font-variant-numeric:tabular-nums; letter-spacing:.02em;
   }
 
-  /* alert bar */
-  .alertbar{
-    border-radius:12px; padding:14px 18px; margin:0 0 20px;
-    font-weight:600; font-size:14.5px; border:1px solid; letter-spacing:-.005em;
-    display:flex; align-items:center; gap:10px;
-  }
-  .alertbar.stop{color:#ffb4ae; border-color:rgba(248,81,73,.4); background:rgba(248,81,73,.10)}
-  .alertbar.wind{color:#f0c674; border-color:rgba(210,153,34,.4); background:rgba(210,153,34,.10)}
 
   /* layout: two-column on wide screens */
   .cols{display:grid; grid-template-columns:1fr; gap:18px}
@@ -274,13 +266,7 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
   .stat .v{font-family:var(--display); font-size:24px; font-weight:600;
     color:var(--ink); font-variant-numeric:tabular-nums; letter-spacing:-.02em}
 
-  /* readout rows (horology) */
-  .hrow{display:flex; justify-content:space-between; align-items:baseline;
-    padding:11px 0; border-bottom:1px solid var(--line)}
-  .hrow:last-of-type{border-bottom:0}
   .hk{font-size:13px; color:var(--dim); font-weight:500}
-  .hv{font-family:var(--display); font-size:16px; font-weight:600;
-    color:var(--ink); font-variant-numeric:tabular-nums; text-align:right}
 
   /* controls */
   .ctl{display:flex; align-items:center; gap:14px; margin:12px 0}
@@ -359,10 +345,6 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
   #logTable td{padding:7px 10px;border-bottom:1px solid rgba(63,49,37,.6);
     font-family:var(--mono);font-size:12px;color:var(--ink);white-space:nowrap}
   #logTable tr:last-child td{border-bottom:0}
-  #logTable tr.bad td{color:var(--faint)}
-  #logTable .del{background:none;border:1px solid var(--line);color:#e08a7a;
-    border-radius:6px;padding:3px 8px;cursor:pointer;font-family:var(--body);font-size:11px}
-  #logTable .del:hover{border-color:var(--bad);background:rgba(193,84,60,.12)}
 
   /* full-bleed subtle top accent */
   .topbar{height:3px; background:linear-gradient(90deg,var(--accent),transparent 60%)}
@@ -377,8 +359,6 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
       <div class="clock" id="clock">--:--:--</div>
     </div>
   </header>
-
-  <div id="alertBar" class="alertbar" style="display:none"></div>
 
   <div class="cols">
     <div class="col">
@@ -401,7 +381,7 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
             <option value="0.6">0.60</option>
           </select>
           <label>Window</label>
-          <select id="xwin" data-help="tt:Time window|How much history the plot shows. Shorter windows make individual ticks and chimes easier to see; longer ones show the pattern of a whole strike sequence.">
+          <select id="xwin" data-help="tt:Time window|How much history the plot shows. Shorter windows make individual chimes easier to see; longer ones show the pattern of a whole strike sequence.">
             <option value="400">10 s</option>
             <option value="1200" selected>30 s</option>
             <option value="2400">1 min</option>
@@ -417,98 +397,6 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
           <div class="stat" data-help="tt:Chimes|Total chimes detected since the device last booted."><div class="k">Chimes</div><div class="v" id="chimes">0</div></div>
           <div class="stat"><div class="k">Last chime</div><div class="v" id="last">&mdash;</div></div>
           <div class="stat" data-help="tt:Level|Current sound level above the ambient floor."><div class="k">Level</div><div class="v" id="lvl">0.00</div></div>
-          <div class="stat" id="envTile" style="display:none"><div class="k">Temp</div><div class="v" id="temp">&mdash;</div></div>
-        </div>
-      </div>
-
-      <div class="panel" id="tickPanel">
-        <h2 data-help="tt:Timegrapher|Measures the escapement tick-tock. The dot lines\u2019 slope is rate; the gap between them is beat error.">Timegrapher</h2>
-        <div class="scope" style="height:180px"><canvas id="tgraph" width="728" height="180"></canvas></div>
-        <div class="grid" style="margin:14px 0">
-          <div class="stat"><div class="k">Rate</div><div class="v" id="tRate">&mdash;</div></div>
-          <div class="stat"><div class="k">Beat error</div><div class="v" id="tBeat">&mdash;</div></div>
-          <div class="stat"><div class="k">Beat period</div><div class="v" id="tPeriod">&mdash;</div></div>
-        </div>
-        <div class="gainwrap" style="margin:4px 0 14px;padding:14px;border:1px solid var(--line);border-radius:9px;background:var(--panel2)">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <button class="btn" id="tickListen" data-help="tt:Tick sensitivity|Listens for a few seconds and reports whether the escapement is actually audible. Use it while turning the LM393 pot to dial in tick detection.">Listen for ticks</button>
-            <select id="tickWin" class="tsel">
-              <option value="4">4 s</option><option value="6" selected>6 s</option>
-              <option value="10">10 s</option><option value="15">15 s</option>
-            </select>
-            <span class="hk" id="tlState"></span>
-          </div>
-          <div class="gverdict" id="tlVerdict" style="font-size:16px;margin:10px 0 3px">&mdash;</div>
-          <div class="gadvice" id="tlAdvice" style="min-height:34px">Press Listen while the clock is ticking and the room is quiet.</div>
-          <div class="gnums">
-            <span>onsets <b id="tlN">&mdash;</b></span>
-            <span>interval <b id="tlI">&mdash;</b></span>
-            <span>bph <b id="tlB">&mdash;</b></span>
-            <span>regularity <b id="tlR">&mdash;</b></span>
-          </div>
-        </div>
-        <div class="actions">
-          <button class="btn primary" id="tickArm" data-help="tt:Measure now|Runs a 12-second tick capture immediately instead of waiting for the next scheduled one.">Measure now</button>
-          <button class="btn" id="tickCal" data-help="tt:Set as target|Locks the current beat period as the reference, so rate is measured against your clock\u2019s true beat.">Set as target</button>
-          <a class="btn" href="/api/tick/log" download="tick.csv">Tick log</a>
-          <span class="hk" id="tickInfo" style="margin-left:2px"></span>
-          <span class="toggle-label">Tick analysis</span>
-          <select id="tickEn" class="tsel"><option value="0">Off</option><option value="1">On</option></select>
-        </div>
-      </div>
-
-    </div>
-    <div class="col">
-
-      <div class="panel">
-        <h2 data-help="tt:Horology|Tracks how far off the top of the hour your clock strikes, turns that into a drift rate, and recommends a pendulum adjustment.">Horology</h2>
-        <div class="hrow" data-help="tt:Drift rate|How many seconds per day your clock gains (+) or loses (\u2212), from hourly strike timing."><span class="hk">Drift rate</span><span class="hv" id="hRate">&mdash;</span></div>
-        <div class="hrow"><span class="hk">Last hourly strike</span><span class="hv" id="hLast">&mdash;</span></div>
-        <div class="hrow" data-help="tt:Screw sensitivity|How much one full turn of the rating nut changes the rate. Learned from your past adjustments."><span class="hk">Screw sensitivity</span><span class="hv" id="hK">&mdash;</span></div>
-        <div class="hrow" data-help="tt:Recommended adjustment|Suggested turns of the rating nut to zero out the drift. + raises the bob (speeds up)."><span class="hk">Recommended adjustment</span><span class="hv" id="hPred">&mdash;</span></div>
-        <div class="ctl" style="margin-top:16px">
-          <label>Turns applied</label>
-          <input type="number" id="turns" step="0.25" placeholder="+ speeds up" style="width:120px;flex:none">
-          <button class="btn primary" id="logAdj">Log</button>
-          <span class="saved" id="adjSaved">logged &#10003;</span>
-        </div>
-        <div class="actions" style="margin-top:12px">
-          <button class="btn" id="learn" data-help="tt:Learn chime|Records the next chime and analyzes its pitch so the device can tell real chimes from other noises.">Learn chime</button>
-          <span id="learnSt" style="font-size:13px;color:var(--dim)"></span>
-          <span class="toggle-label">Tone filter</span>
-          <select id="toneEn" class="tsel"><option value="0">Off</option><option value="1">On</option></select>
-        </div>
-        <div class="actions" style="margin-top:12px">
-          <button class="btn" id="windBtn" data-help="tt:Wind log|Records that you wound the clock now, resetting the wind reminder countdown.">I wound the clock</button>
-          <span class="hk" id="windInfo" style="margin-left:2px"></span>
-          <span class="toggle-label">Half-hour</span>
-          <select id="halfEn" class="tsel"><option value="0">Off</option><option value="1">On</option></select>
-        </div>
-      </div>
-
-      <div class="panel" id="gainPanel">
-        <h2 data-help="tt:Microphone gain|Set the little screwdriver pot on the LM393 mic board. Make a steady sound near the mic (or wait for a chime) and adjust until this reads Good.">Microphone gain</h2>
-        <div class="gainwrap">
-          <div class="gbar" data-help="tt:Signal swing|Shows the raw microphone signal range. It should fill a healthy middle band \u2014 not flat (too quiet) and not slammed to the edges (clipping).">
-            <div class="gticks"><span style="left:2%"></span><span style="left:98%"></span></div>
-            <div class="gfill" id="gFill" style="left:50%;width:0%"></div>
-          </div>
-          <div class="gverdict" id="gVerdict">\u2014</div>
-          <div class="gadvice" id="gAdvice">Turn on the mic and make a sound to begin.</div>
-          <div class="gnums">
-            <span>min <b id="gMin">\u2014</b></span>
-            <span>max <b id="gMax">\u2014</b></span>
-            <span>swing <b id="gSwing">\u2014</b></span>
-            <span>clip <b id="gClip">\u2014</b></span>
-          </div>
-          <div class="gnums" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
-            <span>last chime peak <b id="gPeak">\u2014</b></span>
-            <span>recent <b id="gPeaks">\u2014</b></span>
-          </div>
-          <div class="gnums" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)" data-help="tt:Mic sampling|How many times per second the microphone was actually read, and the longest stretch it went unread in the last second. Around 400&ndash;500/s with gaps near 25&ndash;30 ms (an OLED refresh) is normal. Much longer gaps are moments a strike could be timed late or a short sound missed.">
-            <span>samples/s <b id="gSps">&mdash;</b></span>
-            <span>longest gap <b id="gGap">&mdash;</b></span>
-          </div>
         </div>
       </div>
 
@@ -528,16 +416,47 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
           <button class="btn primary" id="apply">Apply &amp; save</button>
           <span class="saved" id="saved">saved &#10003;</span>
         </div>
+        <div class="actions" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+          <button class="btn" id="learn" data-help="tt:Learn chime|Records the next chime and analyzes its pitch so the device can tell real chimes from other noises.">Learn chime</button>
+          <span id="learnSt" style="font-size:13px;color:var(--dim)"></span>
+          <span class="toggle-label" data-help="tt:Tone filter|When on, a sound only counts as a chime if it matches the learned pitch. Learn a chime first.">Tone filter</span>
+          <select id="toneEn" class="tsel"><option value="0">Off</option><option value="1">On</option></select>
+        </div>
+      </div>
+
+    </div>
+    <div class="col">
+
+      <div class="panel" id="gainPanel">
+        <h2 data-help="tt:Microphone gain|Set the little screwdriver pot on the LM393 mic board. Make a steady sound near the mic (or wait for a chime) and adjust until this reads Good.">Microphone gain</h2>
+        <div class="gainwrap">
+          <div class="gbar" data-help="tt:Signal swing|Shows the raw microphone signal range. It should fill a healthy middle band \&mdash; not flat (too quiet) and not slammed to the edges (clipping).">
+            <div class="gticks"><span style="left:2%"></span><span style="left:98%"></span></div>
+            <div class="gfill" id="gFill" style="left:50%;width:0%"></div>
+          </div>
+          <div class="gverdict" id="gVerdict">\&mdash;</div>
+          <div class="gadvice" id="gAdvice">Turn on the mic and make a sound to begin.</div>
+          <div class="gnums">
+            <span>min <b id="gMin">\&mdash;</b></span>
+            <span>max <b id="gMax">\&mdash;</b></span>
+            <span>swing <b id="gSwing">\&mdash;</b></span>
+            <span>clip <b id="gClip">\&mdash;</b></span>
+          </div>
+          <div class="gnums" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
+            <span>last chime peak <b id="gPeak">\&mdash;</b></span>
+            <span>recent <b id="gPeaks">\&mdash;</b></span>
+          </div>
+          <div class="gnums" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)" data-help="tt:Mic sampling|How many times per second the microphone was actually read, and the longest stretch it went unread in the last second. Around 400&ndash;500/s with gaps near 25&ndash;30 ms (an OLED refresh) is normal. Much longer gaps are moments a strike could be timed late or a short sound missed.">
+            <span>samples/s <b id="gSps">&mdash;</b></span>
+            <span>longest gap <b id="gGap">&mdash;</b></span>
+          </div>
+        </div>
       </div>
 
       <div class="panel">
-        <h2 data-help="tt:Log viewer|Browse the recorded logs in place. On the drift log you can delete a bad measurement \u2014 one mis-counted strike event can visibly skew the drift regression.">Log viewer</h2>
+        <h2 data-help="tt:Log viewer|Browse the recorded chime log in place, newest first.">Log viewer</h2>
         <div class="actions" style="margin-bottom:12px">
-          <select id="logPick" class="tsel">
-            <option value="drift">Drift measurements</option>
-            <option value="chimes">Chime strikes</option>
-          </select>
-          <button class="btn primary" id="logLoad">Load</button>
+          <button class="btn primary" id="logLoad">Load chime log</button>
           <span class="hk" id="logInfo"></span>
         </div>
         <div id="logWrap" style="max-height:330px;overflow:auto;border:1px solid var(--line);border-radius:9px;display:none">
@@ -547,7 +466,7 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
 
       <div class="panel">
         <h2>Logs &amp; device</h2>
-        <div class="ctl" style="margin:0 0 14px;flex-wrap:wrap" data-help="tt:Time zone|Sets local time for the expected strike count and the log timestamps, including daylight saving. Check that the device time shown matches the real time.">
+        <div class="ctl" style="margin:0 0 14px;flex-wrap:wrap" data-help="tt:Time zone|Sets local time for the chime log timestamps, including daylight saving. Check that the device time shown matches the real time.">
           <label>Time zone</label>
           <select id="tzSel" class="tsel">
             <option value="PST8PDT,M3.2.0,M11.1.0">US Pacific</option>
@@ -568,11 +487,9 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
           <span class="saved" id="tzSaved">saved &#10003;</span>
         </div>
         <div class="actions">
-          <button class="btn primary" onclick="dlXlsx('chimes')">Chime log (Excel)</button>
-          <button class="btn primary" onclick="dlXlsx('drift')">Drift log (Excel)</button>
+          <button class="btn primary" onclick="dlXlsx()">Chime log (Excel)</button>
           <a class="btn" href="/api/log" download="chimes.csv">CSV</a>
-          <a class="btn" href="/api/drift" download="drift.csv">CSV</a>
-          <a class="btn" href="/update" target="_blank" data-help="tt:Firmware update|Upload a compiled .bin straight from the browser. This bypasses the Arduino IDE, espota and mDNS entirely \u2014 use Sketch > Export Compiled Binary, then drop the file here.">Update firmware</a>
+          <a class="btn" href="/update" target="_blank" data-help="tt:Firmware update|Upload a compiled .bin straight from the browser. This bypasses the Arduino IDE, espota and mDNS entirely &mdash; use Sketch > Export Compiled Binary, then drop the file here.">Update firmware</a>
           <button class="btn danger" id="reset">Reset WiFi</button>
         </div>
       </div>
@@ -582,8 +499,8 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
 </div>
 
 <script>
-// Canvas colours come from the theme's CSS variables so the scope and
-// timegrapher always match the palette (no hard-coded colours here).
+// Canvas colours come from the theme's CSS variables so the scope always
+// matches the palette (no hard-coded colours here).
 const CV=(n)=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 // ---- scope trace: circular buffer of recent excess levels ----
 const cv=document.getElementById('scope'), cx=cv.getContext('2d');
@@ -905,42 +822,6 @@ document.getElementById('apply').onclick=()=>{
       setTimeout(()=>s.classList.remove('show'),1200);
     });
 };
-// ---- horology panel ----
-function fmtOffset(o){return (o>=0?'+':'')+o.toFixed(1)+'s';}
-async function pollHoro(){
-  try{
-    const h=await (await fetch('/api/horology')).json();
-    document.getElementById('hRate').textContent =
-      h.rateValid? (h.rate>=0?'+':'')+h.rate.toFixed(1)+' s/day ('+h.nMeas+' pts)'
-                 : 'collecting\u2026 ('+h.nMeas+' pts)';
-    document.getElementById('hLast').textContent =
-      h.lastEpoch? h.lastCount+' strikes @ '+
-        new Date(h.lastEpoch*1000).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})+
-        ' \u2192 '+fmtOffset(h.lastOffset)+(h.lastValid?'':' (ignored)')
-      : 'none yet';
-    document.getElementById('hK').textContent =
-      h.kValid? h.k.toFixed(1)+' s/day per turn' : 'needs an adjustment cycle';
-    document.getElementById('hPred').textContent =
-      h.predValid? (h.predTurns>=0?'+':'')+h.predTurns.toFixed(2)+' turns'
-                 : '\u2014';
-    setAlert(h);
-    if(halfEn.value!==String(h.halfHour))halfEn.value=String(h.halfHour);
-  }catch(e){}
-  setTimeout(pollHoro,5000);
-}
-pollHoro();
-
-document.getElementById('logAdj').onclick=()=>{
-  const t=parseFloat(document.getElementById('turns').value);
-  if(!t){alert('Enter a nonzero number of turns');return;}
-  fetch('/api/adjust',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'turns='+t}).then(r=>r.json()).then(()=>{
-      const s=document.getElementById('adjSaved');
-      s.classList.add('show');setTimeout(()=>s.classList.remove('show'),1500);
-      document.getElementById('turns').value='';
-    });
-};
-
 const learnSt=document.getElementById('learnSt');
 document.getElementById('learn').onclick=()=>{
   fetch('/api/learn/start',{method:'POST'}).then(()=>{
@@ -965,106 +846,6 @@ toneEn.onchange=function(){
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:'toneEnabled='+this.value});
 };
-
-// ---- timegrapher (Phase E) ----
-const tg=document.getElementById('tgraph'), tgx=tg.getContext('2d');
-const TGN=120; const tgBuf=[];   // recent {rate,beatErr} samples
-function drawTGraph(){
-  const w=tg.clientWidth||728, h=170;
-  const dpr=window.devicePixelRatio||1;
-  if(tg.width!==Math.round(w*dpr)){tg.width=Math.round(w*dpr);tg.height=Math.round(h*dpr);tgx.setTransform(dpr,0,0,dpr,0,0);}
-  tgx.clearRect(0,0,w,h);
-  tgx.strokeStyle=CV('--grid');tgx.lineWidth=1;
-  for(let x=0;x<=w;x+=w/6){tgx.beginPath();tgx.moveTo(x,0);tgx.lineTo(x,h);tgx.stroke();}
-  for(let y=0;y<=h;y+=h/4){tgx.beginPath();tgx.moveTo(0,y);tgx.lineTo(w,y);tgx.stroke();}
-  // center line = on-time
-  tgx.strokeStyle=CV('--thresh');tgx.beginPath();tgx.moveTo(0,h/2);tgx.lineTo(w,h/2);tgx.stroke();
-  // Classic timegrapher read: two dot lines (tick & tock). The lines'
-  // common SLOPE encodes rate (accumulated phase drift over successive
-  // measurements); the vertical GAP between the two lines is beat error.
-  // Phase accumulates: each measurement's rate advances the running drift.
-  tgx.fillStyle=CV('--trace');tgx.shadowColor=CV('--traceglow');tgx.shadowBlur=6;
-  const beScale=(h/2)/40.0;      // beat-error axis: +/-40 ms full height
-  const phScale=(h/2)/30.0;      // phase axis: +/-30 s of drift full height
-  let phase=0;                   // seconds of accumulated drift (visual)
-  const N=tgBuf.length;
-  for(let i=0;i<N;i++){
-    const s=tgBuf[i];
-    // each window ~= TICK_CAPTURE_INTERVAL; advance drift by rate*interval.
-    phase += s.rate*(300/86400);           // 5-min window's worth of drift
-    if(phase>30)phase=30; if(phase<-30)phase=-30;
-    const x=(i/(TGN-1))*w;
-    const yMid=h/2 - phase*phScale;
-    const be=Math.max(-40,Math.min(40,s.beatErr));
-    tgx.globalAlpha=0.5+0.5*(i/N);
-    tgx.beginPath();tgx.arc(x,Math.max(4,Math.min(h-4,yMid-be*beScale)),2,0,7);tgx.fill();
-    tgx.beginPath();tgx.arc(x,Math.max(4,Math.min(h-4,yMid+be*beScale)),2,0,7);tgx.fill();
-  }
-  tgx.globalAlpha=1;tgx.shadowBlur=0;
-  tgx.fillStyle=CV('--axis');tgx.font='11px monospace';
-  tgx.fillText('slope = rate \u2022 line gap = beat error',8,14);
-  requestAnimationFrame(drawTGraph);
-}
-requestAnimationFrame(drawTGraph);
-
-async function pollTick(){
-  try{
-    const t=await (await fetch('/api/tick')).json();
-    document.getElementById('tickEn').value=String(t.enabled);
-    if(t.valid){
-      document.getElementById('tRate').textContent=(t.rate>=0?'+':'')+t.rate.toFixed(1)+' s/day';
-      document.getElementById('tBeat').textContent=t.beatErrorMs.toFixed(1)+' ms';
-      document.getElementById('tPeriod').textContent=t.beatPeriod.toFixed(3)+' s';
-      document.getElementById('tickInfo').textContent=t.nOnsets+' onsets'+
-        (t.nominal>0?' \u2022 target '+t.nominal.toFixed(3)+'s':' \u2022 auto');
-      tgBuf.push({rate:t.rate,beatErr:t.beatErrorMs});
-      if(tgBuf.length>TGN)tgBuf.shift();
-    }else if(t.enabled){
-      document.getElementById('tickInfo').textContent='listening\u2026 ('+t.nOnsets+' onsets last window)';
-    }
-  }catch(e){}
-  setTimeout(pollTick, 5000);
-}
-pollTick();
-
-document.getElementById('tickArm').onclick=()=>{
-  document.getElementById('tickInfo').textContent='measuring (~12s)\u2026';
-  fetch('/api/tick/arm',{method:'POST'});
-};
-document.getElementById('tickCal').onclick=()=>{
-  fetch('/api/tick/calibrate',{method:'POST'}).then(r=>r.json()).then(j=>{
-    document.getElementById('tickInfo').textContent=j.ok?'target set':'need a valid measurement first';
-  });
-};
-document.getElementById('tickEn').onchange=function(){
-  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'tickEnabled='+this.value});
-};
-
-// ---- tick sensitivity listener ----
-document.getElementById('tickListen').onclick=function(){
-  const secs=document.getElementById('tickWin').value;
-  const st=document.getElementById('tlState');
-  this.disabled=true; st.textContent='listening '+secs+'s\u2026';
-  fetch('/api/tick/listen?s='+secs,{method:'POST'}).then(r=>r.json()).then(d=>{
-    st.textContent='';
-    const v=document.getElementById('tlVerdict');
-    if(d.busy){                      // refused: a strike is due or under way
-      v.textContent='Not now';v.className='gverdict low';
-      document.getElementById('tlAdvice').textContent=d.advice;
-      return;
-    }
-    v.textContent=d.verdict.charAt(0).toUpperCase()+d.verdict.slice(1);
-    v.className='gverdict '+(d.verdict==='good'?'good':(d.verdict==='noisy'?'hot':'low'));
-    document.getElementById('tlAdvice').textContent=d.advice;
-    document.getElementById('tlN').textContent=d.onsets;
-    document.getElementById('tlI').textContent=d.medianIntvl>0?d.medianIntvl.toFixed(3)+' s':'\u2014';
-    document.getElementById('tlB').textContent=d.bph>0?Math.round(d.bph):'\u2014';
-    document.getElementById('tlR').textContent=(d.regularity*100).toFixed(0)+'%';
-  }).catch(()=>{st.textContent='failed';})
-    .finally(()=>{document.getElementById('tickListen').disabled=false;});
-};
-
 
 // ===== XLSX export (no dependencies) =====
 // The device serves plain CSV; the browser turns it into a properly typed
@@ -1116,12 +897,9 @@ function _xlsx(cols,rows,name){
 // Column schemas keyed by CSV header name -> Excel type
 const XSPEC={
  date:{h:'Date',t:'date',w:12}, time:{h:'Time',t:'time',w:14},
- epoch_ms:{h:'Epoch (ms)',t:'text',w:16}, epoch:{h:'Epoch',t:'text',w:14},
+ epoch_ms:{h:'Epoch (ms)',t:'text',w:16},
  sec_from_hour:{h:'Sec from hour',t:'num',w:15},
- offset_mmss:{h:'Offset (m:ss)',t:'text',w:14},
- peak:{h:'Peak',t:'num4',w:10}, strikes:{h:'Strikes',t:'int',w:9},
- expected:{h:'Expected',t:'int',w:10}, valid:{h:'Valid',t:'text',w:8},
- tempC:{h:'Temp (C)',t:'num1',w:10}, half_hour:{h:'Half hour',t:'text',w:11}};
+ peak:{h:'Peak',t:'num4',w:10}};
 
 function csvToXlsx(csv,sheetName,fname){
  const lines=csv.trim().split('\n');
@@ -1140,8 +918,6 @@ function csvToXlsx(csv,sheetName,fname){
      return ((+m[1])*3600+(+m[2])*60+(+m[3])+ms/1000)/86400;}
    if(ty==='num'||ty==='num4'||ty==='num1'||ty==='int'){
      const v=parseFloat(raw); return isNaN(v)?'':v;}
-   if(h==='valid')     return raw==='1'?'yes':'no';
-   if(h==='half_hour') return raw==='1'?'yes':'no';
    return raw;});});
  const blob=new Blob([_xlsx(cols,rows,sheetName)],
    {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
@@ -1150,20 +926,18 @@ function csvToXlsx(csv,sheetName,fname){
  document.body.appendChild(a); a.click();
  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);
 }
-function dlXlsx(kind){
- const url = kind==='drift' ? '/api/drift' : '/api/log';
+function dlXlsx(){
  const info=document.getElementById('logInfo');
  if(info) info.textContent='building workbook\u2026';
- fetch(url).then(r=>r.text()).then(t=>{
-   csvToXlsx(t, kind==='drift'?'Drift':'Chimes',
-             kind==='drift'?'drift.xlsx':'chimes.xlsx');
+ fetch('/api/log').then(r=>r.text()).then(t=>{
+   csvToXlsx(t,'Chimes','chimes.xlsx');
    if(info) info.textContent='';
  }).catch(()=>{if(info) info.textContent='export failed';});
 }
 
-// ---- log viewer / editor ----
+// ---- log viewer ----
 const MAXROWS=250;
-function renderLog(kind,text){
+function renderLog(text){
   const lines=text.trim().split('\n');
   if(lines.length<2){
     document.getElementById('logWrap').style.display='none';
@@ -1172,84 +946,22 @@ function renderLog(kind,text){
     }).catch(()=>{document.getElementById('logInfo').textContent='log is empty';});
     return;}
   const head=lines[0].split(',');
-  // Resolve columns BY NAME, never by fixed index: the CSV layout has changed
-  // before (date/time split into two columns) and hardcoded offsets silently
-  // sent the wrong epoch to the delete endpoint.
-  const iEpoch=head.indexOf('epoch'), iValid=head.indexOf('valid');
   let rows=lines.slice(1).filter(l=>l.length>2);
   const total=rows.length;
   rows=rows.slice(-MAXROWS).reverse();          // newest first
-  const t=document.getElementById('logTable');
-  let html='<tr>'+head.map(h=>'<th>'+h+'</th>').join('')
-          +(kind==='drift'?'<th></th>':'')+'</tr>';
-  for(const r of rows){
-    const c=r.split(',');
-    const invalid=(kind==='drift'&&iValid>=0&&c[iValid]==='0');
-    html+='<tr class="'+(invalid?'bad':'')+'">'+c.map(x=>'<td>'+x+'</td>').join('');
-    if(kind==='drift'&&iEpoch>=0)
-      html+='<td><button class="del" data-ep="'+c[iEpoch]+'">delete</button></td>';
-    else if(kind==='drift') html+='<td></td>';
-    html+='</tr>';
-  }
-  t.innerHTML=html;
+  let html='<tr>'+head.map(h=>'<th>'+h+'</th>').join('')+'</tr>';
+  for(const r of rows) html+='<tr>'+r.split(',').map(x=>'<td>'+x+'</td>').join('')+'</tr>';
+  document.getElementById('logTable').innerHTML=html;
   document.getElementById('logWrap').style.display='';
   document.getElementById('logInfo').textContent =
     total+' rows'+(total>MAXROWS?' (showing newest '+MAXROWS+')':'');
-  if(kind==='drift') t.querySelectorAll('.del').forEach(b=>{
-    b.onclick=()=>{
-      if(!confirm('Delete this measurement? It will no longer affect the drift rate.'))return;
-      fetch('/api/drift/delete',{method:'POST',
-        headers:{'Content-Type':'application/x-www-form-urlencoded'},
-        body:'epoch='+b.dataset.ep}).then(r=>r.json()).then(j=>{
-          if(j.ok) loadLog(); else alert('Row not found');
-        });
-    };
-  });
 }
 function loadLog(){
-  const kind=document.getElementById('logPick').value;
   document.getElementById('logInfo').textContent='loading\u2026';
-  fetch(kind==='drift'?'/api/drift':'/api/log').then(r=>r.text())
-    .then(t=>renderLog(kind,t))
+  fetch('/api/log').then(r=>r.text()).then(renderLog)
     .catch(()=>{document.getElementById('logInfo').textContent='failed';});
 }
 document.getElementById('logLoad').onclick=loadLog;
-
-// ---- environment + alerts (Phase A/B/C) ----
-async function pollEnv(){
-  try{
-    const e=await (await fetch('/api/env')).json();
-    if(e.present){
-      document.getElementById('envTile').style.display='';
-      document.getElementById('temp').textContent=e.tempC.toFixed(1)+'\u00B0C';
-    }
-  }catch(x){}
-  setTimeout(pollEnv,30000);
-}
-pollEnv();
-
-function setAlert(h){
-  const bar=document.getElementById('alertBar');
-  if(h.stopped){
-    bar.style.display='';bar.className='alertbar stop';
-    const mins=Math.floor((h.secsSinceStrike||0)/60);
-    bar.textContent='\u26A0 CLOCK STOPPED \u2014 no strike heard for '+mins+' min';
-  }else if(h.windDue){
-    bar.style.display='';bar.className='alertbar wind';
-    bar.textContent='\u23F3 Time to wind the clock ('+h.daysSinceWind.toFixed(1)+' days since last wind)';
-  }else{bar.style.display='none';}
-  const wi=document.getElementById('windInfo');
-  wi.textContent = (h.daysSinceWind>=0)? h.daysSinceWind.toFixed(1)+' days since wind' : 'no wind logged';
-}
-
-document.getElementById('windBtn').onclick=()=>{
-  fetch('/api/wind',{method:'POST'}).then(()=>{});
-};
-const halfEn=document.getElementById('halfEn');
-halfEn.onchange=function(){
-  fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'halfHour='+this.value});
-};
 
 // ---- Help mode: hover (desktop) or tap (mobile) reveals explanations ----
 (function(){

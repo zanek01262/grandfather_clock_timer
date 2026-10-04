@@ -1,255 +1,220 @@
-# Grandfather Clock Tool — Handoff (v2.10.0)
+# Grandfather Clock Chime Monitor — Handoff (v3.0.0)
 
 **Purpose of this doc:** everything a new person (or a new AI session) needs to
-pick this project up cold. Read this first; `project_summary_v2.10.0.md` is the
-detailed architecture reference alongside it.
+pick this project up cold. Read this first; `project_summary_v3.0.0.md` is the
+compact architecture/API reference alongside it.
 
-> **IMPORTANT — stale docs.** Any document describing an **SD card**, **SdFat**,
-> or **OLED SDA=GPIO12/SCL=GPIO14** is obsolete and *wrong*. The SD card was
-> removed at v2.0.0 and the OLED pins are **reversed** from the vendor listing.
-> Delete older summaries rather than keeping them "for reference" — they have
-> caused repeated confusion.
+> **v3.0.0 is chime detection only.** Everything else from v2.x — horology
+> (drift rate, adjustment advisor, adjustment/wind logs, stopped-clock alarm,
+> half-hour mode), the timegrapher/tick analysis, and the BME280 temperature
+> sensor — was removed. Any doc or code comment describing those is from the
+> v2 era. The full v2 history is in git (last v2 release: 2.16.2).
 
 ---
 
 ## 1. What this device is
 
-An ESP8266-based **acoustic chime monitor and horological instrument** for a
-grandfather clock. It listens to the clock, identifies genuine chimes by their
-learned frequency signature, measures how far each hour-strike lands from the
-true top of the hour (NTP-referenced), computes the pendulum's drift rate, and
-recommends rating-nut adjustments using a sensitivity model it learns from the
-user's own past adjustments. It also measures escapement tick rate and beat
-error (timegrapher), logs environment, and warns if the clock stops.
-
-Interfaces: a responsive web dashboard (Brass & Walnut theme), a 0.96" OLED on
-the device, and a JSON HTTP API.
+An ESP8266 that listens to a grandfather clock through an analog microphone,
+detects each chime/strike, and logs it with a millisecond, NTP-referenced
+timestamp and its loudness (peak). You watch and tune it from a web dashboard
+(live signal plot, threshold/refractory sliders, mic gain meter, chime log
+viewer, Excel/CSV export); the built-in OLED shows the level, chime count and
+a CHIME banner.
 
 ---
 
-## 2. Hardware (verified — 3 wires for the mic, +4 for the optional BME280)
+## 2. Hardware (3 wires)
 
 | Part | Connection | Notes |
 |---|---|---|
 | **FORIOT ESP8266 NodeMCU** w/ built-in SSD1306 OLED | — | Board select: **NodeMCU 1.0 (ESP-12E)** |
 | **OLED** (built in) | **SDA=GPIO14 (D5), SCL=GPIO12 (D6)**, addr 0x3C | ⚠ Vendor listing has these **REVERSED**. Verified by I²C scan. |
 | **LM393 analog mic** | AO→A0, VCC→**3V3** (not 5V), GND→GND | 3V3 keeps A0 in range; the 10k/22k divider fallback was never needed |
-| **BME280** (optional) | SDA/SCL → same I²C bus, addr 0x76 or 0x77 | Auto-probes both; absent = temp compensation simply inactive |
 
 `displayBegin()` also pulses GPIO16 low→high (Heltec-style OLED reset; harmless
-if unwired). **No SD card.** Storage is LittleFS on onboard flash. D0–D4, D7,
-D8 are free.
+if unwired). Storage is LittleFS on onboard flash. D0–D4, D7, D8 are free. See
+`wiring_diagram.svg`.
 
-**If the OLED is ever blank:** flash `OLED_Finder.ino` (kept in outputs), open
-Serial at 115200, and it reports the true pin pair + address in ~2 seconds.
-Never trust a vendor pinout on this project.
+**If the OLED is ever blank:** flash `OLED_Finder.ino`, open Serial at 115200,
+and it reports the true pin pair + address in ~2 seconds. Never trust a vendor
+pinout on this project.
 
 ---
 
 ## 3. Build & flash
 
-- **Board:** NodeMCU 1.0 (ESP-12E Module), ESP8266 community core
+- **Board:** NodeMCU 1.0 (ESP-12E Module), ESP8266 community core (3.1.2 tested)
 - **Flash Size:** must include FS space — e.g. **"4MB (FS:2MB)"**.
-  With `FS:none`, settings and all logs silently fail (serial warns).
-- **Libraries:** Adafruit_SSD1306, Adafruit_GFX, Adafruit_BME280,
-  Adafruit_Sensor. (mDNS/OTA ship with the core; SdFat is **not** used.)
-- **Upload:** USB (COM port) or **OTA** — Tools → Port → network port
-  `grandfatherclock`. OTA discovery in IDE 2.x is flaky; if the network port
-  doesn't appear, restart the IDE with the device already running, allow the
-  IDE through Windows Firewall, and confirm both are on the same subnet.
-  USB always works and is the pragmatic fallback.
+  With `FS:none`, settings and the chime log silently fail (serial warns).
+- **Libraries:** Adafruit_SSD1306, Adafruit_GFX (+ Adafruit_BusIO). mDNS/OTA
+  ship with the core. The BME280/Adafruit_Sensor libraries are no longer needed.
+- **Upload:** USB, **browser at `http://<device>/update`** (Sketch → Export
+  Compiled Binary, upload the .bin — bypasses the IDE's flaky network ports),
+  or IDE OTA (network port `grandfatherclock`).
 - **After flashing any UI change: hard-refresh the browser (Ctrl+Shift+R).**
-  A cached page looks exactly like a frozen device. This has bitten us.
+  The page is embedded in the firmware; a cached page looks like a frozen device.
 
 ---
 
-## 4. First-run / setup flow
+## 4. Setup flow
 
 1. No saved credentials → device raises SoftAP **`GrandfatherClock-Setup`**
-   (open network) and serves a splash at **http://192.168.4.1**.
-2. User picks their network, enters the password, submits.
-3. Device saves to `/config.json`, reboots, joins WiFi.
-4. Dashboard thereafter at **http://grandfatherclock.local** (or its IP; the
-   OLED shows the IP briefly on the "CONNECTED" screen).
-5. "Reset WiFi" on the dashboard returns it to setup mode.
+   (open network) and serves a setup page at **http://192.168.4.1**.
+2. Pick the network, enter the password, submit → saved to `/config.json`,
+   reboot, join WiFi.
+3. Dashboard at **http://grandfatherclock.local** (or the IP the OLED shows
+   briefly on the "CONNECTED" screen).
+4. "Reset WiFi" on the dashboard returns it to setup mode.
 
-**iPhone gotcha:** on the setup AP, turn **Cellular Data off**. iOS sees the
-no-internet AP and routes requests over LTE, so 192.168.4.1 never resolves.
+If the saved network is unreachable at boot (e.g. after a power cut — the
+router takes minutes to come back), the device falls back to setup mode and
+**retries the saved network every 60 s** while no phone is connected to the
+setup AP, rebooting into normal mode once it joins.
+
+**iPhone gotcha:** on the setup AP, turn **Cellular Data off**, or iOS routes
+192.168.4.1 over LTE.
 
 ---
 
-## 5. Firmware layout (19 files)
+## 5. Firmware layout
 
 ```
-GrandfatherClock.ino   orchestration, HTTP routes, loop scheduling
-config.h               ALL pins, tunables, paths, FW_VERSION
+GrandfatherClock.ino   orchestration, HTTP routes, NTP/time zone, WiFi modes, loop
+config.h               pins, tunables, paths, FW_VERSION + version history
 settings.h/.cpp        persisted settings, hand-rolled JSON (no ArduinoJson)
-storage.h/.cpp         LittleFS mount + chime log append/rotate
-sound.h/.cpp           500 Hz A0 sampling, envelope detection, scope bins, gain telemetry
-analysis.h/.cpp        FFT chime learning + Goertzel tone gate
-horology.h/.cpp        strike events, offsets, drift regression, advisor, stopped/wind
-ticks.h/.cpp           escapement capture + beat analysis (rate, beat error)
-environment.h/.cpp     BME280 wrapper
+storage.h/.cpp         LittleFS mount, chime log append/rotate, local-time formatting
+sound.h/.cpp           A0 sampling, envelope detection, scope bins, 1 h history, telemetry
+analysis.h/.cpp        optional tone filter: FFT chime learning + Goertzel verify
 display.h/.cpp         OLED screens
-webpages.h             both web pages as PROGMEM raw strings
+webpages.h             setup page + dashboard as PROGMEM raw strings
 ```
 
 **Design rules that matter:**
-- `horology.cpp` and `ticks.cpp` are deliberately **hardware-agnostic** —
-  temperature, half-hour mode, and wind interval are *pushed in* via setters
-  from the loop. This is what makes them host-testable. Keep it that way.
-- Hot API paths use `snprintf` into fixed buffers, never `String` concat
-  (heap fragmentation on a device meant to run for months).
-- Canvas colors come from CSS variables (`--grid`/`--trace`/`--thresh`/
-  `--axis`) — **retheming is a `:root` edit only**, no drawing-code changes.
+- Hot API paths (`/api/state` runs ~5×/s for months) use `snprintf` into
+  fixed buffers, never `String` concat (heap fragmentation).
+- Canvas colours come from CSS variables (`--grid`/`--trace`/`--thresh`/
+  `--axis`) — retheming is a `:root` edit only.
 
 ---
 
-## 6. How the horology actually works
+## 6. How detection works
 
-**Strike → measurement.** Detected strikes group into an event (6 s of silence
-closes it). The count is compared to the expected local hour (13:00→1,
-00:00→12). Offset = first strike vs. nearest top-of-hour, ms precision,
-**+ = late**. Valid requires count match AND |offset| < 600 s, which
-auto-rejects miscounts and (when half-hour mode is off) :30 single strikes.
+`soundUpdate()` runs every `loop()` and reads A0 at most every 2 ms (~500 Hz;
+the gain panel's **samples/s** and **longest gap** show what is really achieved).
 
-**Drift rate.** Least-squares regression of offset vs. time over valid points
-**since the last logged adjustment**. Needs ≥2 points spanning ≥2 h. Units:
-s/day.
+```
+A0 raw -> /1023 -> |x - center|        center: very slow EMA (DC bias)
+       -> envelope = EMA(0.25)         fast follower of the rectified signal
+       -> ambient  = asymmetric EMA    rises ~25 s, falls ~0.5 s (quiet floor)
+       -> excess   = envelope - ambient (clamped >= 0)
+       -> excess >= threshold and refractory elapsed -> chime candidate
+       -> [tone filter on: 32 ms 8 kHz burst must match the learned pitch]
+       -> peak = max excess over the next 400 ms -> chime logged
+```
 
-**The advisor.** Each logged adjustment stores `(epoch, turns, rateBefore)`.
-Comparing rate before vs. after an adjustment yields **k** = s/day per turn.
-Recommendation = `−rate / k`. **It cannot predict until one full adjustment
-cycle has completed** — that's inherent; no dataset exists for this clock's
-screw pitch until the user creates one.
-
-**Sign convention (user-consistent, keep it):** `+ turns = raising the bob =
-speeding up`.
-
-**Note:** correcting the *rate* does not correct accumulated *offset*. Once
-drift is near zero, the user hand-sets the minute hand once and it stays.
+- Defaults: threshold **0.18**, refractory **1200 ms** (tune on the dashboard).
+- The chime is logged with its **onset** time (the 400 ms peak window is wound
+  back) and only once NTP time is valid. The Log viewer explains an empty log.
+- AO is the raw waveform sampled far below chime pitch, so each reading lands
+  at a random point of the cycle; identical strikes read roughly ±10 %.
+  A peak-hold envelope was tried in 2.16.0 to tighten that and was **reverted**
+  in 2.16.2 — on the real device chimes stopped registering. Don't reintroduce
+  it without on-device evidence.
+- **Live plot:** 25 ms peak bins (fixed cadence), 256-bin ring on the device;
+  the page asks `/api/state?since=<bin>` for exactly what it lacks, so slow
+  responses are caught up instead of dropped. Gaps older than the ring are
+  backfilled from the 1-hour history (drawn fainter, 1 s resolution).
+  Auto-scale always keeps the threshold line in view.
+- Log-streaming handlers keep sampling (`soundSampleOnly()`); chimes detected
+  meanwhile are queued and logged afterwards with their true onset time.
 
 ---
 
 ## 7. HTTP API
 
-**STA mode:** `/` · `/api/state` · `/api/config` (GET/POST) · `/api/log` ·
-`/api/drift` · `/api/horology` · `/api/adjust` (POST turns) · `/api/wind`
-(POST) · `/api/env` · `/api/gain` · `/api/learn/start` (POST) ·
-`/api/learn/status` · `/api/tick` · `/api/tick/arm` (POST) ·
-`/api/tick/calibrate` (POST) · `/api/tick/log` · `/api/reset`
+**STA mode:** `/` · `/api/state?since=<bin>` · `/api/config` GET/POST
+(`threshold`, `refractoryMs`, `toneEnabled`, `toneRatio`, `tz` — POSIX TZ rule,
+legacy `tzOffset` still accepted) · `/api/log` (CSV) · `/api/logstat` ·
+`/api/learn/start` (POST) · `/api/learn/status` · `/api/gain` ·
+`/api/history?n=<entries>` · `/api/reset` · `/update`
 
 **AP mode:** `/` · `/scan` · `/rescan` · `/save`
 
-`/api/config` POST accepts: `threshold`, `refractoryMs`, `tz` (POSIX TZ rule
-with DST, e.g. `PST8PDT,M3.2.0,M11.1.0`; legacy `tzOffset` still accepted),
-`toneEnabled`, `toneRatio`, `halfHour`, `windDays`, `tickEnabled`.
-
 ---
 
-## 8. Storage (LittleFS, ~2 MB)
+## 8. Storage (LittleFS)
 
 | File | Contents | Rotation |
 |---|---|---|
-| `/config.json` | all settings incl. WiFi creds | overwritten |
-| `/chimes.csv` | epoch, peak per strike | 128 KB → `/chimes.old.csv` |
-| `/drift.csv` | epoch,count,expected,offset,valid,tempC,isHalf | **none** (deliberate) |
-| `/adjust.csv` | epoch,turns,rateBefore | none (tiny) |
-| `/wind.csv` | epoch per winding | none (tiny) |
-| `/tick.csv` | epoch,beat,rate,beatErrorMs,amplitude | 128 KB → `.old` |
+| `/config.json` | WiFi creds, threshold, refractory, tone filter, time zone | overwritten |
+| `/chimes.csv` | epoch_ms, peak per chime | 128 KB → `/chimes.old.csv` |
 
-`drift.csv` is deliberately **not** rotated: it's ~1–2 KB/day (years of
-headroom) and it is exactly the long-baseline history that makes the drift
-model valuable. Revisit in a few years, not sooner.
+`/api/log` streams old+current as `date,time,epoch_ms,sec_from_hour,peak`
+(local time per the configured time zone; `sec_from_hour` is signed seconds
+from the nearest top of the hour).
+
+Files written by v2 firmware (`/drift.csv`, `/adjust.csv`, `/wind.csv`,
+`/tick.csv`, `/tick.csv.old`) are left on flash untouched; v3 never reads them.
 
 ---
 
 ## 9. Testing
 
-**Host suite** (`GrandfatherClock_hosttests.zip`): compiles the *real*
-`analysis/horology/ticks/settings` sources against mock Arduino/LittleFS
-headers with g++. **100 checks, all passing at v2.10.0.** Covers FFT peak
-recovery, Goertzel accept/reject matrix, event/offset/hour-mapping (incl.
-negative offsets, midnight, half-hour), regression + k-learning + prediction,
-beat rate/beat-error math, ring-buffer wrap, stopped-clock durations, settings
-JSON round-trip, CSV persistence across simulated reboot. Embedded page JS is
-syntax-checked with `node --check`; pages are rendered headless and screenshot
-for visual review.
+- **Compile check:** arduino-cli with FQBN `esp8266:esp8266:nodemcuv2:eesz=4M2M`.
+- **Page JS:** extract the `<script>` blocks from `webpages.h` and run
+  `node --check`.
+- **Host test suite** (`GrandfatherClock_hosttests.zip`, kept outside the repo):
+  its horology/ticks checks target code removed in v3 and need pruning before
+  it will build again.
+- **Only verifiable on real hardware:** real acoustics, ADC noise under WiFi,
+  loop timing. Simulations of the detector have been wrong about hardware
+  before (see the 2.16.0 envelope above).
 
-Run: extract next to the sketch folder, `./run_tests.sh` (needs g++/WSL).
-Claude runs this in-sandbox before every release.
-
-> ### ⚠ Known blind spot — read before trusting a green suite
-> The host's `unsigned long` is **64-bit**; the ESP8266's is **32-bit**.
-> The suite therefore **cannot** catch integer-width overflow bugs. This
-> already caused a real one: the stopped-clock alarm silently cleared itself
-> after ~49.7 days because `secs * 1000` wrapped uint32 (fixed in v2.8.1 by
-> comparing in seconds). **Any arithmetic on `millis()`, micros, or ms
-> conversions must be reasoned about separately**, and where practical tested
-> in explicit `uint32_t` form.
-
-**Only verifiable on real hardware:** the Arduino IDE compile, ADC burst
-timing under WiFi, and real acoustics.
+> **32-bit vs 64-bit:** the host's `unsigned long` is 64-bit, the ESP8266's is
+> 32-bit. Arithmetic on `millis()`/`micros()` must be reasoned about in
+> `uint32_t` terms (wrap-safe subtraction); a host test can't catch it.
 
 ---
 
 ## 10. Hard-won lessons (do not relearn these)
 
 1. **Never trust vendor pinouts.** OLED SDA/SCL were listed reversed.
-2. **ESP8266 ADC fights WiFi.** No fast `analogRead` in AP mode; bursts only,
-   brief, with *measured* (not assumed) sample rate.
-3. **Blocking WiFi scans drop connected AP clients** — i.e. the phone loading
-   the setup page. Scan *before* raising the AP; rescan asynchronously.
+2. **ESP8266 ADC fights WiFi.** No fast `analogRead` in AP mode; sampling only
+   runs in STA mode, at ≤500 Hz.
+3. **Blocking WiFi scans drop connected AP clients** — scan before raising the
+   AP; rescan asynchronously.
 4. **Never `delay()`/`ESP.restart()` inside an HTTP handler.** Defer via
-   `g_rebootAt` checked in `loop()`, or the response never flushes.
-5. **No external resources on the AP splash.** Captive clients have no
-   internet; a render-blocking font fetch hangs the page. (Verified: 0
-   external refs.)
-6. **A blocking capture deafens the detector.** `ticksCapture()` blocks ~12 s,
-   during which `soundUpdate()` doesn't run and strikes are missed. Captures
-   defer while a strike event is open and within 90 s of :00 (and :30 in
-   half-hour mode). **Hour accuracy outranks tick sampling.**
+   `g_rebootAt` checked in `loop()`.
+5. **No external resources on the AP setup page** — captive clients have no
+   internet.
+6. **Anything that blocks `loop()` deafens the detector** (OLED pushes, long
+   handlers). The OLED refreshes at 2 Hz for this reason.
 7. **String concat in hot API paths fragments the heap** — use snprintf.
-8. **A cached browser page looks exactly like a frozen device.** Hard-refresh
-   before debugging firmware.
+8. **A cached browser page looks exactly like a frozen device.** Hard-refresh.
 9. **iPhone + no-internet AP:** cellular data hijacks 192.168.4.1.
-10. **32-bit vs 64-bit** — see the blind-spot box above.
+10. **`configTime(offset, 0, …)` has no daylight saving** — use a POSIX TZ rule.
+11. **Validate detector changes on the device, not just in simulation.**
 
 ---
 
-## 11. Current state & open items
+## 11. Known open items
 
-**Working and verified on hardware:** provisioning, mDNS, OTA, dashboard,
-scope streaming, OLED, tap-level chime detection, gain calibration tool.
-
-**Built and unit-tested, but never exercised against a real clock:**
-- Learn mode + tone filter (needs a real chime to learn from)
-- Hourly offset capture and drift regression (needs hours of real strikes)
-- The advisor (needs one complete adjustment cycle to learn *k*)
-- **Escapement tick analysis** — the highest-risk feature. Two assumptions are
-  unproven: (a) that the LM393 can hear the escapement at real mic distance
-  (ticks are 30–40 dB below chimes), and (b) that 12 s captures don't disturb
-  WiFi. It ships **default-OFF** and fully isolated for exactly this reason.
-  First real test: enable it, watch serial for `[TICK] onsets=N` — N ≈ 12–24
-  per 12 s window means the escapement is being heard.
-
-**Suggested next steps:**
-- ~~Periodic STA retry from AP fallback~~ — done in 2.16.1: with saved creds and
-  no AP clients, retries every 60 s and reboots into STA mode once it joins
-- Drift/offset history chart on the dashboard, with adjustment markers
-- Phase F leftovers: clock profiles + exportable service report
-- Health trending (strike amplitude / decay over months → "service due")
+- A strike that rings above the threshold for longer than the refractory can
+  re-trigger and log an extra row. Mitigation: set Refractory just under the
+  clock's strike spacing.
+- `/update` has no password (set `OTA_PASSWORD` in `config.h`), and
+  `/api/reset` wipes WiFi settings on a plain GET.
+- `saveSettings()` truncates then rewrites `config.json`; a power cut mid-save
+  can lose settings (device falls back to setup mode).
+- The `settings.cpp` header comment contains an example SSID/password — replace
+  it if those are real.
 
 ---
 
-## 12. Working agreement (how this project has been run)
+## 12. Working agreement
 
-- **Semver:** MAJOR = breaking hardware/storage, MINOR = features,
-  PATCH = fixes. `FW_VERSION` lives in `config.h` and is reported on the
-  serial banner, OLED splash, and `/api/state`'s `fw` field — that last one is
-  how you confirm an OTA actually took.
-- **Tests are written alongside features, not after.** The beat-analysis math
-  was developed test-first and the suite caught two real bugs before hardware.
-- **Every release ships:** firmware zip (all sources + summary), the host test
-  suite, and an updated `project_summary_vX.Y.Z.md`.
-- **Keep exactly one summary.** Delete superseded ones immediately.
+- **Semver:** MAJOR = breaking hardware/storage/feature removal, MINOR =
+  features, PATCH = fixes. `FW_VERSION` lives in `config.h` and is reported on
+  the serial banner, OLED splash and `/api/state`'s `fw` field (that's how you
+  confirm an update took).
+- **Keep exactly one project summary.** Delete superseded ones.

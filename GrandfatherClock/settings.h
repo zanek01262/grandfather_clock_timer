@@ -16,10 +16,6 @@ struct Settings {
   uint8_t  toneEnabled;     // 1 = require learned-tone match to count chime
   float    toneF1, toneF2;  // learned chime frequencies (0 = unset)
   float    toneRatio;       // tone energy fraction needed to pass
-  uint8_t  halfHourStrike;  // 1 = clock also strikes once at :30 (Phase D)
-  uint16_t windDays;        // remind to wind after this many days (0=off)
-  uint8_t  tickEnabled;     // 1 = escapement tick analysis active (Phase E)
-  float    tickNominal;     // nominal half-beat seconds (0 = auto)
 };
 
 extern Settings settings;
