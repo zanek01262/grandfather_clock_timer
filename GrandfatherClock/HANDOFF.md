@@ -1,4 +1,4 @@
-# Grandfather Clock Chime Monitor — Handoff (v3.0.0)
+# Grandfather Clock Chime Monitor — Handoff (v3.1.0)
 
 **Purpose of this doc:** everything a new person (or a new AI session) needs to
 pick this project up cold. Read this first; `project_summary_v3.0.0.md` is the
@@ -136,7 +136,7 @@ A0 raw -> /1023 -> |x - center|        center: very slow EMA (DC bias)
 (`threshold`, `refractoryMs`, `toneEnabled`, `toneRatio`, `tz` — POSIX TZ rule,
 legacy `tzOffset` still accepted) · `/api/log` (CSV) · `/api/logstat` ·
 `/api/learn/start` (POST) · `/api/learn/status` · `/api/gain` ·
-`/api/history?n=<entries>` · `/api/reset` · `/update`
+`/api/history?n=<entries>` · `/api/log/clear` (POST) · `/api/reset` · `/update`
 
 **AP mode:** `/` · `/scan` · `/rescan` · `/save`
 
@@ -154,7 +154,14 @@ legacy `tzOffset` still accepted) · `/api/log` (CSV) · `/api/logstat` ·
 from the nearest top of the hour).
 
 Files written by v2 firmware (`/drift.csv`, `/adjust.csv`, `/wind.csv`,
-`/tick.csv`, `/tick.csv.old`) are left on flash untouched; v3 never reads them.
+`/tick.csv`, `/tick.csv.old`) are left on flash at boot; v3 never reads them.
+
+**Clearing (3.1.0+):** the dashboard's *Clear chime log* button (confirm
+dialog) POSTs `/api/log/clear`, which deletes `/chimes.csv`,
+`/chimes.old.csv` and the v2 leftovers above, and replies
+`{"ok":true,"freed":<bytes>}`. `/config.json` is kept. POST only, so a
+prefetch can't trigger it. Before 3.1.0 the only way to wipe the log was
+Arduino IDE *Tools → Erase Flash → All Flash Contents* (loses settings too).
 
 ---
 

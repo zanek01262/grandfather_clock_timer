@@ -23,6 +23,12 @@ bool storageReady();    // true if the filesystem mounted
 // detect that by magnitude (values < 1e12 are seconds).
 void logChime(uint64_t epochMs, float peak);
 
+// Delete the whole chime log (current + rotated file) and any leftover
+// v2 log files. Settings (config.json) are untouched. Returns true if
+// both chime-log files are gone; *freedBytes (optional) receives the
+// bytes all deleted files held.
+bool clearChimeLog(size_t* freedBytes);
+
 // Split epoch milliseconds into local date and time strings, kept SEPARATE
 // so spreadsheets parse each column as a real date / time instead of text.
 //   date -> "YYYY-MM-DD"      (>= 12 bytes)

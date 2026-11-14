@@ -60,3 +60,26 @@ void logChime(uint64_t epochMs, float peak) {
     Serial.println(F("[FS] chime log rotated"));
   }
 }
+
+bool clearChimeLog(size_t* freedBytes) {
+  // The chime log, plus files left behind by v2 firmware: v3 never reads
+  // them and has no way to download them, so they are dead flash space.
+  static const char* const parts[] = {
+    CHIME_LOG_PATH, CHIME_LOG_OLD_PATH,
+    "/drift.csv", "/adjust.csv", "/wind.csv", "/tick.csv", "/tick.csv.old"
+  };
+  size_t freed = 0;
+  if (g_ready) {
+    for (const char* path : parts) {
+      File f = LittleFS.open(path, "r");
+      if (f) { freed += f.size(); f.close(); }
+      LittleFS.remove(path);                      // ok if absent
+    }
+  }
+  if (freedBytes) *freedBytes = freed;
+  bool ok = g_ready && !LittleFS.exists(CHIME_LOG_PATH)
+                    && !LittleFS.exists(CHIME_LOG_OLD_PATH);
+  Serial.printf("[FS] chime log cleared (%u bytes) %s\n",
+                (unsigned)freed, ok ? "ok" : "FAILED");
+  return ok;
+}

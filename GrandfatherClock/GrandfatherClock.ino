@@ -396,6 +396,17 @@ static void handleLogStat() {
   server.send(200, "application/json", buf);
 }
 
+static void handleLogClear() {
+  // Deletes the chime log (both files); settings and WiFi stay. POST only,
+  // so a link prefetch or crawler can never wipe the log.
+  if (!storageReady()) { server.send(503, "application/json", "{\"ok\":false,\"why\":\"no fs\"}"); return; }
+  size_t freed = 0;
+  bool ok = clearChimeLog(&freed);
+  char b[48];
+  snprintf(b, sizeof(b), "{\"ok\":%s,\"freed\":%u}", ok ? "true" : "false", (unsigned)freed);
+  server.send(ok ? 200 : 500, "application/json", b);
+}
+
 static void handleReset() {
   // Clears saved WiFi creds -> next boot re-enters provisioning.
   settings.wifiSsid = "";
@@ -501,6 +512,7 @@ static bool startSTAMode() {
   server.on("/api/config", HTTP_GET,  handleConfigGet);
   server.on("/api/config", HTTP_POST, handleConfigSet);
   server.on("/api/log",    handleLog);
+  server.on("/api/log/clear",    HTTP_POST, handleLogClear);
   server.on("/api/learn/start",  HTTP_POST, handleLearnStart);
   server.on("/api/learn/status", handleLearnStatus);
   server.on("/api/gain",         handleGain);
