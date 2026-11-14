@@ -10,7 +10,8 @@
                    user pick one + enter a password, POSTs to /save.
      DASH_PAGE   — served in STA mode. Polls /api/state, renders a live
                    scope trace + meters, and offers live threshold tuning
-                   (POST /api/config) and a CSV log download (/api/log).
+                   (POST /api/config), a CSV log download (/api/log) and
+                   a confirm-guarded log wipe (POST /api/log/clear).
    ===================================================================== */
 #ifndef WEBPAGES_H
 #define WEBPAGES_H
@@ -490,7 +491,9 @@ static const char DASH_PAGE[] PROGMEM = R"HTML(<!DOCTYPE html><html lang="en"><h
           <button class="btn primary" onclick="dlXlsx()">Chime log (Excel)</button>
           <a class="btn" href="/api/log" download="chimes.csv">CSV</a>
           <a class="btn" href="/update" target="_blank" data-help="tt:Firmware update|Upload a compiled .bin straight from the browser. This bypasses the Arduino IDE, espota and mDNS entirely &mdash; use Sketch > Export Compiled Binary, then drop the file here.">Update firmware</a>
+          <button class="btn danger" id="logClear" data-help="tt:Clear chime log|Deletes every recorded chime from the device to start a fresh log. Settings and WiFi are kept. This cannot be undone &mdash; download the Excel or CSV first if you want a copy.">Clear chime log</button>
           <button class="btn danger" id="reset">Reset WiFi</button>
+          <span class="hk" id="clrInfo"></span>
         </div>
       </div>
 
@@ -1028,6 +1031,22 @@ async function pollGain(){
   setTimeout(pollGain, 400);
 }
 pollGain();
+
+document.getElementById('logClear').onclick=()=>{
+  if(!confirm('Delete the entire chime log from the device?\n\n'+
+    'This cannot be undone. Download the Excel or CSV first if you want '+
+    'to keep it. Leftover v2 files (drift, adjustment, wind and tick logs) '+
+    'are removed too. Settings and WiFi are not affected.'))return;
+  const info=document.getElementById('clrInfo');
+  info.textContent='clearing…';
+  fetch('/api/log/clear',{method:'POST'}).then(r=>r.json()).then(j=>{
+    if(!j.ok) throw 0;
+    info.textContent='log cleared ('+(j.freed/1024).toFixed(1)+' KB freed)';
+    document.getElementById('logTable').innerHTML='';
+    document.getElementById('logWrap').style.display='none';
+    document.getElementById('logInfo').textContent='log cleared';
+  }).catch(()=>{info.textContent='clear failed';});
+};
 
 document.getElementById('reset').onclick=()=>{
   if(!confirm('Forget WiFi and return to setup mode?'))return;

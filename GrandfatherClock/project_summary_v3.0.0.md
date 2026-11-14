@@ -1,4 +1,4 @@
-# Grandfather Clock Chime Monitor — Project Summary (v3.0.0)
+# Grandfather Clock Chime Monitor — Project Summary (v3.1.0)
 
 Compact architecture and API reference. Start with `HANDOFF.md`.
 
@@ -54,6 +54,7 @@ BME280 sensor.
 | `/api/learn/status` | GET | armed, valid, f1, f2, sr, enabled, ratio |
 | `/api/gain` | GET | rawMin, rawMax, swing, clip, verdict, advice, sps, gapMs |
 | `/api/history?n=<entries>` | GET | header `scale,seq,count,firstBin,binsPerEntry` + comma-separated values |
+| `/api/log/clear` | POST | delete chime log (+ leftover v2 logs), keep settings; `{ok,freed}` |
 | `/api/reset` | GET | clear WiFi creds and reboot to setup mode |
 | `/update` | GET/POST | browser firmware upload |
 | `/scan`, `/rescan`, `/save` | — | AP-mode setup |
@@ -64,4 +65,4 @@ BME280 sensor.
 2.15.1 scope dropout fix · 2.15.2 history backfill · 2.16.0 sampling
 telemetry/OLED 2 Hz · 2.16.1 time zone with DST, AP retry, sampling during
 streaming · 2.16.2 envelope revert, plot keeps threshold in view ·
-**3.0.0 chime detection only**.
+**3.0.0 chime detection only** · 3.1.0 Clear chime log button.
